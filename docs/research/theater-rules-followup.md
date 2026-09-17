@@ -1,3 +1,5 @@
+> 2026-09-17 最终整合：请以[规则、状态与决策节点汇总](theater-rules-resolution-2026-09-17.md)为本研究票的当前结论。本文保留阶段调查历史；其未完成状态、补截图／回溯取证要求及初演建议已由后续证据和用户明确范围取代。
+
 # 剧诗规则补证：官方配图与当前期次边界
 
 研究日期：2026-09-17。对应 [核实剧诗规则、原石奖励目标与整局决策节点](https://github.com/HaotongCheng/BetterTheater/issues/2)。续接[阶段报告](https://github.com/HaotongCheng/BetterTheater/blob/f60266a9001dd6edf64e5892dd44a2d37ff81192/docs/research/theater-rules.md)，本文件记录新增证据及对旧报告的修正；不选择算法。
