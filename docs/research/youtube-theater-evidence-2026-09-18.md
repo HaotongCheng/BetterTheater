@@ -1,6 +1,6 @@
 # YouTube 剧诗决策文字证据（2026-09-18）
 
-关联研究：[issue #11](https://github.com/HaotongCheng/BetterTheater/issues/11)。本轮只读字幕与作者文字，未观看视频、抽帧或下载音视频。用户提供的 BibiGPT 原始导出不在本报告范围，也未公开提交。
+关联研究：[研究高手如何联动当期祝福、配队与关键角色预留](https://github.com/HaotongCheng/BetterTheater/issues/11)。本轮只读字幕与作者文字，未观看视频、抽帧或下载音视频。用户提供的 BibiGPT 原始导出不在本报告范围，也未公开提交。结合三份中文完整字幕的最终归纳见[综合报告](blessing-transcript-synthesis-2026-09-18.md)。
 
 ## 结果与证据等级
 

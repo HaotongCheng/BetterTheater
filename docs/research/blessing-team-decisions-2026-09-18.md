@@ -1,5 +1,7 @@
 # 祝福、配队与关键角色预留：文字证据与待转录缺口
 
+> 后续更新：现已取得用户指定的三份中文完整字幕及Watchful的当期YouTube自动字幕。下面的“待转录”“尚未取得”等描述保留为阶段记录，不代表当前状态。最新结论、取消的来源及仍存在的证据边界见[转录综合报告](blessing-transcript-synthesis-2026-09-18.md)，具体提取结果见[YouTube报告](youtube-theater-evidence-2026-09-18.md)。
+
 研究日期：2026-09-18。对应 [研究票 #11](https://github.com/HaotongCheng/BetterTheater/issues/11)，承接 [角色替代研究 #10](https://github.com/HaotongCheng/BetterTheater/issues/10)。本轮没有观看视频、分析视频帧或生成视频截图；遵循用户“先用第三方工具转成文档，再阅读”的约束。
 
 ## 本轮获得了什么，仍不能声称什么
