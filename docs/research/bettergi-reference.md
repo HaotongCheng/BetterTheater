@@ -75,4 +75,3 @@ BetterGI 将许多静态模板、ROI、阈值、替换词典放进 `Recognition.
 - [9] [README：功能、环境说明与运行方式声明](https://github.com/babalae/better-genshin-impact/blob/42e1c0e745670eb4443c1e0357fba963eb24dfcd/README.md)
 - [10] [固定提交文件树](https://github.com/babalae/better-genshin-impact/tree/42e1c0e745670eb4443c1e0357fba963eb24dfcd)
 - [11] [根 LICENSE](https://github.com/babalae/better-genshin-impact/blob/42e1c0e745670eb4443c1e0357fba963eb24dfcd/LICENSE)
-
