@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>局内状态回放原型（可抛弃）</title>
+<style>
+:root{--ink:#1f2328;--muted:#6b7280;--line:#e5e7eb;--bg:#fafaf9;--card:#fff;--accent:#b4532a;--accent-bg:#fbeee8;--ok:#2f7d4f;--warn:#9a6700;--warn-bg:#fff8e1;--unk:#9ca3af;--old:#b0b4bc;--syn:#5b4bb5;--syn-bg:#f3f0ff}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55;font-size:14px}
+main{max-width:1180px;margin:0 auto;padding:24px 20px 80px}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600}
+p{margin:6px 0}
+ul{margin:6px 0;padding-left:20px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.grid{display:grid;gap:12px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card.wide{grid-column:1/-1}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin:0}
+.kv dt{color:var(--muted);white-space:nowrap}
+.kv dd{margin:0}
+.v{font-weight:600}
+.src{color:var(--muted);font-size:12px;margin-left:4px}
+.fresh-ok{color:var(--ok);font-size:12px}
+.fresh-stale{color:var(--warn);background:var(--warn-bg);padding:0 4px;border-radius:3px;font-size:12px}
+.fresh-unk{color:var(--unk);font-style:italic}
+.old{color:var(--old);font-size:12px}
+.hint-row td{color:var(--old)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.flag{display:inline-block;background:var(--warn-bg);color:var(--warn);border-radius:3px;padding:0 5px;font-size:12px;margin:1px 2px 1px 0}
+.tag{display:inline-block;border-radius:3px;padding:0 5px;font-size:12px;margin-right:4px;background:#eef0f3;color:var(--muted)}
+.tag.ok{background:#e6f4ea;color:var(--ok)}
+.tag.no{background:var(--accent-bg);color:var(--accent)}
+.tag.syn{background:var(--syn-bg);color:var(--syn)}
+.btn{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;margin:3px 4px 3px 0;cursor:pointer;font:inherit;font-size:13px;color:var(--ink)}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:disabled{cursor:default;opacity:.45}
+.btn:disabled:hover{border-color:var(--line);color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{color:#fff;opacity:.9}
+.btn.next{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
+.btn.rec{border-style:dashed}
+.btn.syn{background:var(--syn-bg)}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tab{padding:6px 12px;cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;font-size:13px}
+.tab.active{background:var(--card);border-color:var(--line);color:var(--accent);font-weight:600}
+.steps .btn{display:block;width:100%;text-align:left;margin:4px 0}
+.steps .n{display:inline-block;width:28px;color:var(--muted)}
+.ledger tr.other td{color:var(--old)}
+.ledger tr.dup td{color:var(--muted);font-style:italic}
+.ledger tr.rec td{color:var(--syn)}
+.chg li{margin:2px 0}
+.contract{font-size:13px;margin:0;padding-left:20px}
+.contract li{margin-bottom:5px}
+.boxes{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:10px 0}
+.box{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--card);font-size:13px}
+.box b{display:block;margin-bottom:4px;color:var(--accent)}
+details summary{cursor:pointer;color:var(--accent);font-size:13px}
+.legend span{display:inline-block;margin-right:14px;font-size:12px}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;vertical-align:-1px;border:1px solid var(--line)}
+.note{font-size:12px;color:var(--muted)}
+.empty{color:var(--unk);font-style:italic}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:8px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:800px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>局内状态回放原型</h1>
+<p class="muted">可抛弃的决策材料。对应票：<a href="https://github.com/HaotongCheng/BetterTheater/issues/16">用观测回放验证局内状态更新与回溯隔离</a>。</p>
+
+<div class="card" style="margin-top:12px">
+<p><b>这个页面让你验证的问题：</b>怎样根据<b>带来源的实际观测</b>维护局内状态，使推荐未执行不改变事实、重复读取不重复入账、暂不可见不当作零值，并在失败或回溯后避免旧分支污染当前局面。</p>
+<p>输入全部是<b>人工标注</b>的观测（取自 S 批 23 张与 E1 批 13 张截图的真值，用户 2026-09-30 复核），外加明确标记的<b>合成用例</b>。没有 OCR、没有真实捕获。角色用中性代号：S 批 P–W，E1 批 A–J。回溯后游戏实际恢复哪些字段<b>没有观测</b>，这里一律显示“未知”，合成用例里的数值只示范读取流程，不是游戏规则。</p>
+
+<p style="margin-top:12px"><b>提议的四个状态边界</b>（请对着下面的面板判断它们分得对不对）：</p>
+<div class="boxes">
+  <div class="box"><b>观测账本</b>按时间追加的观测与建议，每条带来源（人工标注 / 合成 / 建议）和所属分支。只增不改，可整段回放。</div>
+  <div class="box"><b>当前局面</b>只由<b>当前分支</b>的观测投影出来。每个字段 = 读数 + 来源观测 + 新鲜度（已确认 / 可能陈旧 / 未知）。初始全部未知。</div>
+  <div class="box"><b>本局记录</b>跨分支的事实清单：结算、获得、回溯次数、每个挑战的尝试次数。回溯不抹掉它，它为验收协议里的“额外挑战尝试”服务。</div>
+  <div class="box"><b>建议</b>独立列表。只记录发出了什么、之后的观测是否与之一致。从不写入局面。</div>
+</div>
+
+<details>
+<summary>提议的更新契约（9 条，点开查看）</summary>
+<ol class="contract" style="margin-top:8px">
+<li><b>只有观测改变事实。</b>建议与推断进账本，但不碰局面。</li>
+<li><b>读数直接覆盖同字段上一次读数，不做加减推算。</b>余额不按奖励加，等级不按获得次数加，耐力不按出战扣。</li>
+<li><b>画面不可见（裁切、不在本页）不触碰字段。</b>字段只会从“未知”变“已确认”，或被新读数覆盖。</li>
+<li><b>事件让字段变“可能陈旧”，不让它变值。</b>结算、获得、角色加入、刷新、幕次变化之后，受影响字段标“可能陈旧”，直到重读。</li>
+<li><b>完整列表中缺席只产生“待核对”标记，不写 0。</b>只显示本场阵容的结算页不算完整列表。身份未配对的列表只更新人数与耐力分布。</li>
+<li><b>连续重复读取同一页面视为同一帧。</b>同结果、同用时、其间没有新的开战前页面的结算只登记一次。</li>
+<li><b>结算绑定最近一次开战前页面。</b>开战前页面之后若看到事件页、伙伴选人或获得结果页，视为那次开战被放弃；其间看过多个不同挑战的详情则归属“不确定”；一个都没有则“未知挑战”。不猜。</li>
+<li><b>“已回溯”页面开出新分支。</b>当前局面只用新分支的观测；旧分支留在账本与本局记录；回溯后未重读的字段为“未知”，既不恢复旧值也不清零。</li>
+<li><b>拒判页面（局前页、弹层）只记录不入账。</b></li>
+</ol>
+</details>
+<p class="legend" style="margin-top:10px"><span><i class="sw" style="background:#fff"></i>人工标注观测（S 批 / E1 批）</span><span><i class="sw" style="background:var(--syn-bg)"></i>合成用例</span><span><i class="sw" style="background:#fff;border-style:dashed"></i>建议</span><span><i class="sw" style="background:var(--warn-bg)"></i>可能陈旧 / 待核对</span><span><i class="sw" style="background:#eee;border-color:#ddd"></i>回溯前旧分支值（仅提示）</span></p>
+</div>
+
+<h2>当前局面 <span class="small muted" id="branch-title"></span></h2>
+<div class="toolbar">
+  <label class="small"><input type="checkbox" id="showOld" checked> 显示回溯前旧分支的值（灰色，仅供参考）</label>
+  <span class="small muted" id="counts"></span>
+</div>
+<div id="state" class="grid cards"></div>
+
+<h2>刚才发生了什么</h2>
+<div id="changes" class="card"><span class="empty">还没有操作。</span></div>
+
+<h2>自由操作</h2>
+<div class="card">
+  <h3>真实观测 · S 批（2026-09-18，2560×1440）</h3>
+  <div id="btn-S"></div>
+  <h3 style="margin-top:10px">真实观测 · E1 批（2026-09-16/17 合作局，用户裁切图）</h3>
+  <div id="btn-E1"></div>
+  <h3 style="margin-top:10px">合成用例</h3>
+  <div id="btn-SYN"></div>
+  <h3 style="margin-top:10px">建议（只进账本，不改事实）</h3>
+  <div id="btn-REC"></div>
+  <h3 style="margin-top:10px">操作</h3>
+  <button class="btn" id="btn-dup">重读当前页面（重复帧）</button>
+  <button class="btn" id="btn-undo">撤销上一步</button>
+  <button class="btn" id="btn-reset">全部重置</button>
+</div>
+
+<h2>引导情景</h2>
+<div class="tabs" id="tabs"></div>
+<div id="scenario" class="card"></div>
+
+<h2>观测账本</h2>
+<div class="card"><div id="ledger"></div></div>
+
+<p class="note" style="margin-top:24px">字段真值取自 <code>prototypes/fixed-screenshot-reading/labels.py</code>（分支 prototype/fixed-screenshot-reading）与两份研究记录；E1 的图序按研究记录排列，图号之间有未记录操作。本页不含任何截图。</p>
+</main>
+
+<script>
+/* =====================================================================
+ * 纯状态模块：TheaterLedger
+ * 不碰 DOM，不依赖页面。可以整体搬进真实代码。
+ * ===================================================================== */
+const TheaterLedger = (() => {
+  const NV = null; // 画面不可见 / 未读
+  const vis = v => v !== NV && v !== undefined;
+  const clone = x => JSON.parse(JSON.stringify(x));
+  const TREE_FIELD = { 绽放:'bloom', 激化:'quicken', 感电:'electro' };
+
+  const PAGE_LABEL = {
+    event_select:'事件页', details_roster:'演出详情·角色', details_blessing:'演出详情·祝福与神秘收获',
+    battle_preview:'开战前', battle_result_lineup:'结算·本场阵容', post_battle_recruit:'战后招募',
+    companion_select:'伙伴事件选人', battle_failed:'演出失败', paused_resume:'暂离后重开',
+    rewind_result:'回溯结果', blessing_acquired:'祝福获得结果', unknown:'拒判页面',
+  };
+
+  /* ---------- 账本 ---------- */
+  function createRun(){
+    return { seq:0, entries:[], branches:[{ id:'A', from:null, openedBy:null, rewindAct:null, seq:0 }], current:'A' };
+  }
+  function lastObsEntry(run){
+    for (let i = run.entries.length - 1; i >= 0; i--) if (run.entries[i].kind === 'obs') return run.entries[i];
+    return null;
+  }
+  function sameFrame(a, b){
+    if (a.id === b.id) return true;
+    const strip = o => { const c = { ...o }; delete c.id; delete c.note; delete c.source; delete c.batch; return JSON.stringify(c); };
+    return strip(a) === strip(b);
+  }
+  function observe(run, obs){
+    const r = clone(run); r.seq++;
+    const prev = lastObsEntry(r);
+    const dup = !!(prev && prev.branch === r.current && sameFrame(prev.obs, obs));
+    let branch = r.current;
+    if (obs.page === 'rewind_result' && !dup){
+      const nb = { id: String.fromCharCode(65 + r.branches.length), from: r.current, openedBy: obs.id, rewindAct: vis(obs.act) ? obs.act : null, seq: r.seq };
+      r.branches.push(nb); r.current = nb.id; branch = nb.id;
+    }
+    r.entries.push({ seq: r.seq, kind:'obs', branch, obs: clone(obs), dup });
+    return r;
+  }
+  function recommend(run, rec){
+    const r = clone(run); r.seq++;
+    r.entries.push({ seq: r.seq, kind:'rec', branch: r.current, rec: clone(rec) });
+    return r; // 建议只进账本，不碰任何事实
+  }
+  function undo(run){
+    const r = clone(run); const e = r.entries.pop(); if (!e) return r;
+    const opened = r.branches.find(b => b.seq === e.seq && b.id !== 'A');
+    if (opened){ r.branches = r.branches.filter(b => b !== opened); r.current = opened.from; }
+    return r;
+  }
+
+  /* ---------- 投影：一个分支的当前局面 ---------- */
+  function emptySituation(branchId){
+    return { branch: branchId, fields:{}, chars:{}, charOrder:[], unidentified:null, candidates:null,
+      pending:[], settlements:[], acquisitions:[], events:[], recs:[], notes:[], flags:[], dupCount:0, rejected:0, lastEventPageSeq:0 };
+  }
+  // 这些页面只能从事件页进入：开战前页面之后看到它们，说明那次开战没有发生。
+  const ABANDON_PAGES = ['event_select', 'companion_select', 'blessing_acquired'];
+
+  function evalRecs(S, kind, payload, e){
+    for (const r of S.recs){
+      if (r.status !== '待观测') continue;
+      const x = r.expect;
+      if (kind === 'acquire' && x.type === 'acquire'){
+        r.status = payload.title === x.title ? '与实际一致' : '未采纳';
+        r.detail = `实际获得「${payload.title}」（${payload.src}）`;
+      } else if (kind === 'lineup' && x.type === 'lineup'){
+        const a = [...payload.ids].sort().join(''), b = [...x.ids].sort().join('');
+        r.status = a === b ? '与实际一致' : '未采纳';
+        r.detail = `实际阵容 ${payload.ids.join('、')}（${e.obs.id}）`;
+      } else if (kind === 'lineup-unidentified' && x.type === 'lineup'){
+        r.status = '无法核对'; r.detail = `${e.obs.id} 的阵容身份未配对`;
+      } else if (kind === 'refresh' && x.type === 'noRefresh'){
+        r.status = '未采纳'; r.detail = `刷新次数 ${payload.from}→${payload.to}（${e.obs.id}）`;
+      } else if (kind === 'act' && x.type === 'noRefresh'){
+        r.status = '与实际一致'; r.detail = `本幕未见刷新，已进入第 ${payload.act} 幕（${e.obs.id}）`;
+      } else if (kind === 'join' && x.type === 'recruit'){
+        r.status = '已有角色加入'; r.detail = `${payload.id} 加入（${e.obs.id}）；是否为建议对象无法由画面核对`;
+      }
+    }
+  }
+
+  function projectBranch(run, branchId){
+    const S = emptySituation(branchId);
+    const set = (name, value, e) => { if (!vis(value)) return; S.fields[name] = { value, src: e.obs.id, seq: e.seq, page: e.obs.page }; };
+    const event = (e, kind, affects, label) => S.events.push({ seq: e.seq, kind, affects, label, src: e.obs.id });
+    const note = (seq, text) => S.notes.push({ seq, text });
+    const binfo = run.branches.find(b => b.id === branchId);
+    if (binfo.from){
+      note(binfo.seq, `由 ${binfo.openedBy} 的“已回溯”开出分支 ${branchId}。旧分支 ${binfo.from} 的观测只保留在账本与本局记录里，不参与当前局面。余额、刷新、祝福等级、神秘收获、候选、逐人耐力、剩余回溯次数在重读前一律为“未知”——不恢复旧值，也不清零。`);
+    }
+
+    for (const e of run.entries){
+      if (e.branch !== branchId) continue;
+      if (e.kind === 'rec'){ S.recs.push({ ...e.rec, seq: e.seq, status:'待观测', detail:'' }); continue; }
+      const o = e.obs;
+      if (e.dup){ S.dupCount++; note(e.seq, `${o.id}：与上一帧内容相同，视为重复读取。局面不变，结算与获得记录不新增。`); continue; }
+      if (o.page === 'unknown'){ S.rejected++; note(e.seq, `${o.id}：拒判页面（${o.note || '局前或弹层'}）。只记录、不入账。`); continue; }
+
+      // 幕次
+      let actChanged = false;
+      if (vis(o.act)){
+        const prev = S.fields.act ? S.fields.act.value : undefined;
+        if (prev !== undefined && o.act !== prev){
+          actChanged = true;
+          const gap = o.act - prev;
+          let t = `幕次 ${prev}→${o.act}`;
+          if (gap > 1) t += `：第 ${gap === 2 ? prev + 1 : (prev + 1) + '–' + (o.act - 1)} 幕完全未观测`;
+          t += '；上一幕的候选作废，余额、等级、耐力标“幕次变化后未重读”。';
+          note(e.seq, t);
+          delete S.fields.cards;
+          if (S.pending.length){ note(e.seq, `开战前页面 ${S.pending.map(p => p.title).join('、')} 之后没有看到结算，随幕次变化作废（不登记结果）。`); S.pending = []; }
+          event(e, 'act', ['balance','stamina','levels'], '幕次变化后未重读');
+          evalRecs(S, 'act', { act: o.act }, e);
+        }
+        set('act', o.act, e);
+      }
+      // 非战斗页面：之前的开战前页面被放弃（没有开战）
+      if (ABANDON_PAGES.includes(o.page) && S.pending.length){
+        note(e.seq, `开战前页面 ${S.pending.map(p => p.src + '「' + p.title + '」').join('、')} 之后看到了${PAGE_LABEL[o.page]}（${o.id}），视为那次开战被放弃，不再作为结算归属候选。`);
+        S.pending = [];
+      }
+      if (o.page === 'event_select') S.lastEventPageSeq = e.seq;
+      // 刷新次数
+      if (vis(o.refresh)){
+        const prev = S.fields.refresh ? S.fields.refresh.value : undefined;
+        if (prev !== undefined && o.refresh < prev && !actChanged){
+          note(e.seq, `刷新次数 ${prev}→${o.refresh}：发生了刷新，候选以本页为准。刷新费用未验证，余额标“刷新后未重读”。`);
+          event(e, 'refresh', ['balance'], '刷新后未重读');
+          evalRecs(S, 'refresh', { from: prev, to: o.refresh }, e);
+        }
+        set('refresh', o.refresh, e);
+      }
+      // 资源、等级、其它直接读数
+      set('balance', o.balance, e); set('rewindLeft', o.rewindLeft, e);
+      set('crown', o.crown, e); set('bloom', o.bloom, e); set('quicken', o.quicken, e); set('electro', o.electro, e);
+      if (o.branchLevels) for (const k in o.branchLevels) set(TREE_FIELD[k], o.branchLevels[k], e);
+      set('held', o.held, e); set('boons', o.boons, e); set('rifts', o.rifts, e);
+      if (vis(o.cards)) set('cards', o.cards, e);
+      if (o.page === 'paused_resume') note(e.seq, `${o.id}：暂离后重开，“正于第 ${o.act} 幕战斗”。此页不显示资源与角色；之前的开战前页面仍视为未结算。`);
+      if (o.page === 'rewind_result') note(e.seq, `${o.id}：读到“已回溯至第 ${o.act} 幕”。回溯结果页不显示剩余回溯次数，不把回溯前读到的次数自动减一，等待重读。`);
+
+      // 开战前
+      if (o.page === 'battle_preview' && o.challenge){
+        const title = vis(o.challenge.title) ? o.challenge.title : '标题不可见的挑战';
+        const p = { title, reward: o.challenge.reward, star: o.challenge.star, src: o.id, seq: e.seq };
+        const same = S.pending.findIndex(q => q.title === title);
+        if (same >= 0){ S.pending[same] = p; note(e.seq, `${o.id}：再次看到「${title}」的开战前页面，仍算同一个待结算挑战。`); }
+        else S.pending.push(p);
+        if (S.pending.length > 1) note(e.seq, `结算前已看过 ${S.pending.length} 个不同挑战的开战前页面（${S.pending.map(p => p.title).join('、')}）。下一次结算的归属将记为“不确定”，不猜左边第一个。`);
+      }
+      // 获得结果
+      if (o.acquired){
+        const last = S.acquisitions[S.acquisitions.length - 1];
+        const rec = { title: o.acquired.title, tree: o.acquired.tree, src: o.id, seq: e.seq, flag: null };
+        if (last && last.title === o.acquired.title){ rec.flag = '与此前记录同名，若实为同一次获得请核对'; note(e.seq, `${o.id}：获得记录「${o.acquired.title}」与 ${last.src} 同名但不是连续帧，按两次登记并标待核对。`); }
+        S.acquisitions.push(rec);
+        note(e.seq, `${o.id}：登记获得「${o.acquired.title}」。等级不按次数加，以之后读到的等级为准；余额标“获得祝福后未重读”。`);
+        event(e, 'acquisition', ['balance','levels'], '获得祝福后未重读');
+        evalRecs(S, 'acquire', rec, e);
+      }
+      // 结算
+      if (o.result && vis(o.result.outcome)){
+        const key = `${o.result.outcome}|${vis(o.result.time) ? o.result.time : '?'}`;
+        const last = S.settlements[S.settlements.length - 1];
+        const previewSince = last ? S.pending.some(p => p.seq > last.seq) : S.pending.length > 0;
+        const eventPageSince = !!(last && S.lastEventPageSeq > last.seq);
+        if (last && last.key === key && !previewSince && !eventPageSince){
+          last.evidence.push(o.id);
+          note(e.seq, `${o.id}：结算“${o.result.outcome}${vis(o.result.time) ? ' ' + o.result.time : ''}”与 ${last.evidence[0]} 同结果、同用时、其间没有新的开战前页面或事件页，视为同一次结算，不重复登记。`);
+        } else {
+          let bind;
+          if (S.pending.length === 1) bind = { title: S.pending[0].title, confidence:'推定', why:`上一次开战前页面 ${S.pending[0].src}` };
+          else if (S.pending.length > 1) bind = { title: S.pending.map(p => p.title).join(' / '), confidence:'不确定', why:'结算前看过多个开战前页面' };
+          else bind = { title:'未知挑战', confidence:'未知', why:'本分支没有观测到开战前页面' };
+          const st = { key, outcome: o.result.outcome, time: vis(o.result.time) ? o.result.time : null, reward: vis(o.result.reward) ? o.result.reward : null,
+            marks: o.result.marks || null, act: S.fields.act ? S.fields.act.value : null, challenge: bind, evidence:[o.id], seq: e.seq, branch: branchId };
+          S.settlements.push(st); S.pending = [];
+          note(e.seq, `${o.id}：登记结算 ${st.outcome}${st.time ? ' ' + st.time : ''} → 归属「${bind.title}」（${bind.confidence}：${bind.why}）。奖励不加进余额；余额与未在本页出现的角色耐力标“结算后未重读”。`);
+          event(e, 'settlement', ['balance','stamina'], '结算后未重读');
+          evalRecs(S, 'settlement', st, e);
+        }
+      } else if (o.result && !vis(o.result.outcome)){
+        note(e.seq, `${o.id}：结算结果被裁切，不登记结算。`);
+      }
+      // 候选
+      if (vis(o.candidates)) S.candidates = { levels: o.candidates, src: o.id, seq: e.seq };
+      // 角色
+      if (o.roster){
+        const R = o.roster;
+        if (!R.identified){
+          S.unidentified = { src: o.id, seq: e.seq, kind: R.kind, coverage: R.coverage, count: R.count, stamina: R.staminaList, standbyVisible: R.standbyVisible };
+          note(e.seq, `${o.id}：${R.count} 人可见但身份未配对，只记录人数与耐力分布，不更新逐人状态${R.coverage === 'partial' ? '；列表不完整' : ''}。`);
+          if (R.kind === 'lineup') evalRecs(S, 'lineup-unidentified', {}, e);
+        } else {
+          const had = S.charOrder.length > 0;
+          const seen = new Set();
+          for (const m of R.members){
+            seen.add(m.id);
+            let c = S.chars[m.id];
+            if (!c){
+              c = S.chars[m.id] = { id: m.id, firstSeen: o.id, status: null, stamina: null, staminaSrc: null, seenSeq: 0, lineup: null, absent: null };
+              S.charOrder.push(m.id);
+              if (had && R.kind !== 'standby'){
+                note(e.seq, `${m.id} 首次出现于 ${o.id}（${R.kind === 'lineup' ? '本场阵容' : '可出战'}，${m.stamina} 格）。加入途径未观测，不推算招募费用；余额标“有角色加入后未重读”。`);
+                event(e, 'join', ['balance'], '有角色加入后未重读');
+                evalRecs(S, 'join', { id: m.id }, e);
+              }
+            }
+            c.stamina = m.stamina; c.staminaSrc = o.id; c.seenSeq = e.seq; c.absent = null;
+            if (R.kind === 'lineup') c.lineup = o.id;
+            else { c.status = m.standby ? '待命' : '可出战'; c.lineup = null; }
+            if (m.stamina === 0) note(e.seq, `${m.id} 耐力 0（${o.id} 读到两格全灰）。这是读数，不是由缺席推断。`);
+          }
+          if (R.kind === 'lineup') evalRecs(S, 'lineup', { ids: R.members.map(m => m.id) }, e);
+          if (R.coverage === 'complete' && R.kind !== 'lineup'){
+            for (const id of S.charOrder){
+              const c = S.chars[id];
+              if (seen.has(id) || c.status !== '可出战') continue;
+              c.absent = { src: o.id, seq: e.seq };
+              if (c.stamina === 0) note(e.seq, `${id} 缺席于 ${o.id}（该页列出全部可出战）。耐力 0 已于 ${c.staminaSrc} 读到，与用户说明“耗尽后不显示”一致；不另造“耗尽”状态，按读数记。`);
+              else note(e.seq, `${id} 缺席于 ${o.id}（该页列出全部可出战）。不记为 0：上次耐力 ${c.stamina}（${c.staminaSrc}）保留并标“缺席待核对”。用户说明“耗尽后不显示”尚无配对样本。`);
+            }
+          }
+        }
+      }
+    }
+    // 一致性提示：等级读数 vs 获得记录
+    for (const tree in TREE_FIELD){
+      const f = S.fields[TREE_FIELD[tree]]; if (!f) continue;
+      const n = S.acquisitions.filter(a => a.tree === tree && a.seq <= f.seq).length;
+      if (f.value > n) S.flags.push(`${tree}等级读数 ${f.value}（${f.src}）高于本分支获得记录 ${n} 条：有未观测的获得，以读数为准。`);
+    }
+    return S;
+  }
+
+  const FIELD_CATEGORY = { balance:'balance', crown:'levels', bloom:'levels', quicken:'levels', electro:'levels' };
+  function freshness(S, field){
+    const f = S.fields[field]; if (!f) return { state:'unknown' };
+    const cat = FIELD_CATEGORY[field]; if (!cat) return { state:'ok' };
+    const evs = S.events.filter(ev => ev.affects.includes(cat) && ev.seq > f.seq);
+    return evs.length ? { state:'stale', reason: evs[evs.length - 1].label, since: evs[evs.length - 1].src } : { state:'ok' };
+  }
+  function staminaFreshness(S, c){
+    const evs = S.events.filter(ev => ev.affects.includes('stamina') && ev.seq > c.seenSeq);
+    return evs.length ? { state:'stale', reason: evs[evs.length - 1].label, since: evs[evs.length - 1].src } : { state:'ok' };
+  }
+
+  /* ---------- 本局记录：跨分支 ---------- */
+  function runRecord(run){
+    const settlements = [], acquisitions = [], byChallenge = {};
+    for (const b of run.branches){
+      const S = projectBranch(run, b.id);
+      for (const s of S.settlements){ settlements.push(s); const k = s.challenge.title; (byChallenge[k] = byChallenge[k] || { title: k, confidence: s.challenge.confidence, list: [] }).list.push(s); }
+      for (const a of S.acquisitions) acquisitions.push({ ...a, branch: b.id });
+    }
+    return { settlements, acquisitions, byChallenge, rewinds: run.branches.length - 1, branches: run.branches };
+  }
+
+  function project(run){
+    const binfo = run.branches.find(b => b.id === run.current);
+    return { S: projectBranch(run, run.current), prev: binfo.from ? projectBranch(run, binfo.from) : null, record: runRecord(run) };
+  }
+
+  /* ---------- 对照：按直觉记账的朴素快照 ----------
+   * 事件加减、缺席即耗尽、建议即执行、回溯不分支、重复帧照记。
+   * 这是旧合作局记账文本里出现过的做法，放在这里只为对照。 */
+  function projectNaive(run){
+    const N = { act:null, balance:null, refresh:null, crown:null, bloom:null, quicken:null, electro:null, chars:{}, settlements:0, acquisitions:0, lastCards:null };
+    const setv = (k, v) => { if (vis(v)) N[k] = v; };
+    const price = title => { if (!N.lastCards) return null; const c = N.lastCards.find(c => c[1] === title); if (!c) return null; const n = parseInt(c[0], 10); return isNaN(n) ? null : n; };
+    const bump = (tree, title) => { const t = TREE_FIELD[tree]; if (t) N[t] = (N[t] || 0) + 1; N.crown = (N.crown || 0) + 1; const p = price(title); if (p !== null && N.balance !== null) N.balance += p; };
+    for (const e of run.entries){
+      if (e.kind === 'rec'){
+        const x = e.rec.expect;
+        if (x.type === 'acquire') bump(x.tree, x.title);
+        else if (x.type === 'lineup') for (const id of x.ids){ if (N.chars[id]) N.chars[id] = { ...N.chars[id], stamina: Math.max(0, (N.chars[id].stamina || 0) - 1) }; }
+        continue;
+      }
+      const o = e.obs; if (o.page === 'unknown') continue;
+      setv('act', o.act); setv('balance', o.balance); setv('refresh', o.refresh); setv('crown', o.crown); setv('bloom', o.bloom); setv('quicken', o.quicken); setv('electro', o.electro);
+      if (o.branchLevels) for (const k in o.branchLevels) N[TREE_FIELD[k]] = o.branchLevels[k];
+      if (vis(o.cards)) N.lastCards = o.cards;
+      if (o.acquired){ N.acquisitions++; bump(o.acquired.tree, o.acquired.title); }
+      if (o.result && vis(o.result.outcome)){ N.settlements++; if (o.result.outcome === '成功' && vis(o.result.reward) && N.balance !== null) N.balance += o.result.reward; }
+      if (o.roster && o.roster.identified){
+        const seen = new Set();
+        for (const m of o.roster.members){ seen.add(m.id); N.chars[m.id] = { stamina: m.stamina, status: m.standby ? '待命' : '可出战' }; }
+        for (const id in N.chars) if (!seen.has(id)) N.chars[id] = { stamina: 0, status:'耗尽' };
+      }
+    }
+    return N;
+  }
+
+  return { NV, vis, PAGE_LABEL, createRun, observe, recommend, undo, project, projectBranch, projectNaive, freshness, staminaFreshness };
+})();
+</script>
+
+<script>
+/* =====================================================================
+ * 观测数据：人工标注（S 批、E1 批）与合成用例
+ * ===================================================================== */
+const NV = TheaterLedger.NV;
+const ids = (s, st) => [...s].map(id => ({ id, stamina: st }));
+const mem = pairs => pairs.map(([id, stamina]) => ({ id, stamina }));
+const avail = (members, coverage = 'complete') => ({ kind:'avail', identified:true, coverage, members });
+const lineup = members => ({ kind:'lineup', identified:true, coverage:'partial', members });
+
+const OBS = {};
+function def(o){ OBS[o.id] = o; }
+
+// ---- S 批（P–W）----
+def({ id:'S09', source:'人工标注', batch:'S', page:'event_select', act:1, crown:8, bloom:0, quicken:0, electro:0, balance:280, refresh:3,
+  cards:[['+90','战斗·普通'],['+90','战斗·普通'],['-80','伙伴·随机'],['-60','激化·原态']], note:'第一幕事件页，左下有“演出详情”入口' });
+def({ id:'S10', source:'人工标注', batch:'S', page:'details_roster', crown:8, bloom:0, quicken:0, electro:0, balance:280,
+  roster:{ kind:'avail+standby', identified:false, coverage:'partial', count:6, staminaList:[2,2,2,2,2,2], standbyVisible:16 },
+  note:'可出战 6 人各 2 格（卡片式，身份未配对）；待命区可见 16 张，另有半卡被裁切，右侧有滚动条' });
+def({ id:'S11', source:'人工标注', batch:'S', page:'battle_preview', challenge:{ title:'战斗·普通', reward:90, star:'80 秒' }, balance:280,
+  roster: avail(ids('PQRSTW', 2)), note:'6 名可出战角色各 2 格' });
+def({ id:'S12', source:'人工标注', batch:'S', page:'companion_select', candidates:[71,90,80], roster: avail(ids('PQRSTW', 2)), note:'3 名候选；候选不等于已加入' });
+def({ id:'S13', source:'人工标注', batch:'S', page:'blessing_acquired', acquired:{ tree:'激化', title:'激化·原态' }, note:'明文“激化祝福已升级”“激化·原态”' });
+def({ id:'S14', source:'人工标注', batch:'S', page:'battle_preview', challenge:{ title:'战斗·精锐来袭', reward:110, star:'75 秒' }, balance:25,
+  roster: avail(ids('PQRSTUVW', 2)), note:'8 名可出战各 2 格；U、V 此前未出现' });
+def({ id:'S15', source:'人工标注', batch:'S', page:'battle_result_lineup', result:{ outcome:'成功', time:'02:08', reward:110, marks:['✓','✗'] },
+  roster: lineup(ids('SRUV', 1)), note:'标题“演出阵容”，只有本场 4 人各 1 格；不是全部可出战' });
+def({ id:'S16', source:'人工标注', batch:'S', page:'post_battle_recruit', result:{ outcome:'成功', time:'02:08' }, candidates:[80,71],
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1],['V',1]])), note:'8 名可出战，4 名 2 格 / 4 名 1 格；2 名待选；同一 02:08 结果' });
+def({ id:'S17', source:'人工标注', batch:'S', page:'event_select', act:2, crown:10, bloom:0, quicken:2, electro:0, balance:135, refresh:3,
+  cards:[['+90','战斗·普通'],['-80','伙伴·随机'],['-60','绽放·原态'],['免费','神秘收获']], note:'第二幕事件页' });
+def({ id:'S18', source:'人工标注', batch:'S', page:'details_blessing', crown:10, bloom:0, quicken:2, electro:0, balance:135, held:2,
+  boons:['伙伴·即兴特邀','惊喜·近价交换'], branchLevels:{ 绽放:0 }, note:'第三页签上部；激化、感电等级在滚动区下方不可见' });
+def({ id:'S19', source:'人工标注', batch:'S', page:'details_blessing', crown:10, bloom:0, quicken:2, electro:0, balance:135,
+  branchLevels:{ 绽放:0, 激化:2, 感电:0 }, note:'同页下部；神秘收获列表不可见' });
+def({ id:'S20', source:'人工标注', batch:'S', page:'event_select', act:4, crown:11, bloom:0, quicken:2, electro:1, balance:140, refresh:2, rifts:1,
+  cards:[['+90','战斗·守护桥段'],['-70','感电·分支'],['-70','激化·进阶'],['-70','绽放·原态']], note:'左侧一个裂隙入口；用户说明为首次出现、尚未完成' });
+def({ id:'S21', source:'人工标注', batch:'S', page:'battle_failed', result:{ outcome:'失败' }, countdown:24, note:'“演出失败”，24 秒后自动退出；无角色与资源；按钮存在不证明操作发生' });
+def({ id:'S22', source:'人工标注', batch:'S', page:'paused_resume', act:4, rewindLeft:2, note:'“正于第4幕战斗”“回溯机会：剩余2次”' });
+def({ id:'S23', source:'人工标注', batch:'S', page:'rewind_result', act:4,
+  roster:{ kind:'avail', identified:false, coverage:'partial', count:7, staminaList:[2,2,2,2,2,1,1] }, note:'“已回溯至第4幕”；卡片式，第 8 张被右侧截断；不显示剩余回溯次数' });
+
+// ---- E1 批（A–J）----
+def({ id:'E1:act-1-recruitment-before', source:'人工标注', batch:'E1', page:'companion_select', candidates:[90,80,95], roster: avail(ids('BCDEFGH', 2)), note:'第一幕招募候选；7 个可出战头像各 2 格' });
+def({ id:'E1:act-1-bloom-before', source:'人工标注', batch:'E1', page:'unknown', note:'祝福购买确认弹层：人工可读余额 145、绽放 0→1、价格 60，但识别路线对弹层拒判' });
+def({ id:'E1:act-1-bloom-after', source:'人工标注', batch:'E1', page:'event_select', act:1, crown:9, bloom:1, quicken:0, electro:0, balance:85, refresh:3,
+  cards:[['+90','战斗·普通'],['+90','战斗·普通'],['-60','感电·原态'],['-60','绽放·分支']], note:'购买后事件页' });
+def({ id:'E1:act-1-battle-before', source:'人工标注', batch:'E1', page:'battle_preview', challenge:{ title:NV, reward:90, star:'80 秒' }, balance:NV,
+  roster: avail(ids('ABCDEFGH', 2)), note:'标题与余额被裁切；8 名可出战各 2 格，A 此前未出现' });
+def({ id:'E1:act-1-battle-after', source:'人工标注', batch:'E1', page:'post_battle_recruit', result:{ outcome:'成功', time:'00:48' }, candidates:[90,71],
+  roster: avail(mem([['A',2],['C',2],['E',2],['F',2],['B',1],['D',1],['G',1],['H',1]])), note:'战后两名招募候选' });
+def({ id:'E1:act-2-events', source:'人工标注', batch:'E1', page:'event_select', act:2, crown:9, bloom:1, quicken:0, electro:0, balance:175, refresh:3,
+  cards:[['+90','战斗·普通'],['+90','战斗·普通'],['-60','激化·原态'],['免费','神秘收获']], note:'第二幕事件页' });
+def({ id:'E1:act-5-recruitment', source:'人工标注', batch:'E1', page:'post_battle_recruit', result:{ outcome:NV }, candidates:[90,70],
+  roster:{ kind:'avail', identified:false, coverage:'complete', count:7, staminaList:[2,2,2,2,2,1,1] }, note:'结算结果与用时被裁切；身份未配对；“第五幕”来自对话位置，画面无幕次' });
+def({ id:'E1:act-9-refresh-before', source:'人工标注', batch:'E1', page:'event_select', act:9, crown:14, bloom:2, quicken:1, electro:3, balance:135, refresh:1, rifts:2,
+  cards:[['+90','战斗·普通'],['-80','伙伴·水元素'],['-60','绽放·进阶'],['-40','神秘收获·珍贵']], note:'第九幕刷新前；两张圣牌入口' });
+def({ id:'E1:act-9-refresh-after', source:'人工标注', batch:'E1', page:'event_select', act:9, refresh:0, rifts:2,
+  cards:[['+90','战斗·普通'],['+90','战斗·普通'],['-80','伙伴·随机'],['-80','伙伴·水元素']], note:'顶栏被裁掉：余额与祝福等级不可见；用户确认刷新了' });
+def({ id:'E1:chariot-challenge', source:'人工标注', batch:'E1', page:'battle_preview', challenge:{ title:'月谕圣牌·七·战车', reward:90, star:'65 秒' }, note:'挑战详情；角色列表未标注' });
+def({ id:'E1:moon-challenge', source:'人工标注', batch:'E1', page:'battle_preview', challenge:{ title:'月谕圣牌·十八·月亮', reward:90, star:'击败 18 名敌人' }, note:'挑战详情；角色列表未标注' });
+def({ id:'E1:final-battle', source:'人工标注', batch:'E1', page:'battle_result_lineup', result:{ outcome:'成功', time:'00:40', reward:125, marks:['✓','✓'] },
+  roster:{ kind:'lineup', identified:false, coverage:'partial', count:4, staminaList:[0,0,0,1] }, note:'3 人两格均灰仍显示：耐力 0 是读到的值；身份未配对' });
+def({ id:'E1:unfinished-challenge-warning', source:'人工标注', batch:'E1', page:'unknown', note:'圣牌未完成提示弹层：拒判' });
+
+// ---- 合成用例（只示范流程，不是游戏规则）----
+def({ id:'合成-开战前-缺V', source:'合成', batch:'合成', page:'battle_preview', challenge:{ title:'战斗·普通', reward:90, star:'80 秒' }, balance:135,
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1]])), note:'合成：完整可出战列表里 V 缺席' });
+def({ id:'合成-开战前-全8', source:'合成', batch:'合成', page:'battle_preview', challenge:{ title:'战斗·普通', reward:90, star:'80 秒' }, balance:135,
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1],['V',1]])), note:'合成：V 重新出现，仍 1 格' });
+def({ id:'合成-结算-四人归零', source:'合成', batch:'合成', page:'battle_result_lineup', result:{ outcome:'成功', time:'01:30', reward:90, marks:['✓','✓'] },
+  roster: lineup(ids('RSUV', 0)), note:'合成：本场 4 人两格全灰（参照 E1 最后一战的全灰显示）' });
+def({ id:'合成-战后-仅四人', source:'合成', batch:'合成', page:'post_battle_recruit', result:{ outcome:'成功', time:'01:30' }, candidates:[80],
+  roster: avail(ids('PQTW', 2)), note:'合成：战后可出战列表只剩 4 人' });
+def({ id:'合成-开战前-守护桥段', source:'合成', batch:'合成', page:'battle_preview', challenge:{ title:'战斗·守护桥段', reward:90, star:'60 秒' }, balance:140,
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1],['V',1]])), note:'合成：第 4 幕开战前重读；耐力数值仅示例' });
+def({ id:'合成-回溯结果-7人', source:'合成', batch:'合成', page:'rewind_result', act:4,
+  roster: avail(mem([['P',2],['Q',2],['R',2],['S',2],['T',2],['U',1],['W',1]]), 'partial'), note:'合成：假定身份已配对以示范分支机制；第 8 张截断；耐力数值不代表回溯恢复规则' });
+def({ id:'合成-回溯后事件页-余额不可见', source:'合成', batch:'合成', page:'event_select', act:4, balance:NV, refresh:2, rifts:1,
+  cards:[['+90','战斗·守护桥段'],['-70','感电·分支'],['-70','激化·进阶'],['-70','绽放·原态']], note:'合成：回溯后事件页，顶栏余额与等级被遮挡；候选内容仅示例' });
+def({ id:'合成-回溯后详情页', source:'合成', batch:'合成', page:'details_blessing', crown:11, bloom:0, quicken:2, electro:1, balance:140, held:2,
+  boons:['伙伴·即兴特邀','惊喜·近价交换'], branchLevels:{ 绽放:0, 激化:2, 感电:1 }, note:'合成：回溯后主动打开详情页重读；数值仅示例，不是回溯恢复规则' });
+def({ id:'合成-开战前-战车', source:'合成', batch:'合成', page:'battle_preview', challenge:{ title:'月谕圣牌·七·战车', reward:90, star:'65 秒' },
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1],['V',1]])), note:'合成：标题借自 E1 战车详情' });
+def({ id:'合成-开战前-月亮', source:'合成', batch:'合成', page:'battle_preview', challenge:{ title:'月谕圣牌·十八·月亮', reward:90, star:'击败 18 名敌人' },
+  roster: avail(mem([['P',2],['Q',2],['T',2],['W',2],['R',1],['S',1],['U',1],['V',1]])), note:'合成：标题借自 E1 月亮详情' });
+def({ id:'合成-结算-成功00:40', source:'合成', batch:'合成', page:'battle_result_lineup', result:{ outcome:'成功', time:'00:40', reward:90, marks:['✓','✓'] },
+  roster: lineup(ids('PQTW', 1)), note:'合成：结算页不显示挑战标题' });
+def({ id:'合成-失败', source:'合成', batch:'合成', page:'battle_failed', result:{ outcome:'失败' }, countdown:24, note:'合成：失败页，无角色与资源' });
+
+// ---- 建议 ----
+const RECS = {
+  R1: { id:'R1', text:'购买「绽放·原态」', expect:{ type:'acquire', title:'绽放·原态', tree:'绽放' } },
+  R2: { id:'R2', text:'本场出战 P、Q、T、W', expect:{ type:'lineup', ids:['P','Q','T','W'] } },
+  R3: { id:'R3', text:'本幕不要刷新', expect:{ type:'noRefresh' } },
+  R4: { id:'R4', text:'邀请 90 级候选', expect:{ type:'recruit' } },
+};
+
+// ---- 情景 ----
+const S_SEQ = ['S09','S10','S11','S12','S13','S14','S15','S16','S17','S18','S19','S20'];
+const o = id => ({ type:'obs', id });
+const rec = id => ({ type:'rec', id });
+const dup = () => ({ type:'dup' });
+const upTo = id => S_SEQ.slice(0, S_SEQ.indexOf(id) + 1).map(o);
+
+const SCENARIOS = [
+  { title:'S 批：真实序列回放',
+    intro:'2026-09-18 用户截图 S09–S23，按原编号顺序回放（人工标注，非 OCR）。图号之间有未记录的操作。中途插入两条合成建议，看建议与实际不一致时，事实如何只跟观测走。',
+    watch:['S10 身份未配对：只更新人数，不更新逐人状态','S11 的开战前页面在 S12（伙伴选人）处被视为放弃；S15 的归属因此是“精锐来袭（推定）”','S14：U、V 首次出现，加入途径未观测；余额 25 是读数，不是推算','S15 只有本场 4 人：其余 4 人不被当作 0，只标“结算后未重读”','S15→S16 同一次结算只登记一次；余额到 S17 才读到 135','S17 激化等级 2 高于获得记录 1：有未观测的获得','S20 第 4 幕：第 3 幕未观测；耐力自 S16 后一直未重读','S21 失败归属“未知挑战”：本分支没看过开战前页面','S23 回溯：开出分支 B，一切待重读；7 张卡身份未配对'],
+    preset:[], steps:[o('S09'),o('S10'),o('S11'),o('S12'),rec('R1'),o('S13'),o('S14'),rec('R2'),o('S15'),o('S16'),o('S17'),o('S18'),o('S19'),o('S20'),o('S21'),o('S22'),o('S23')] },
+  { title:'E1 批：旧合作局回放',
+    intro:'2026-09-16/17 合作局的 13 张用户裁切图（A–J 为中性代号）。顺序按研究记录排列，不是连续录屏；第 2 幕到第 9 幕之间完全未观测，战车、月亮、最后一战三张图的先后也未经证实。',
+    watch:['购买确认弹层被拒判：只记录不入账；余额直到事件页才变 85','战前图标题与余额被裁切：不可见字段不触碰；A 首次出现，加入途径未观测','第 5 幕图结算结果被裁切：不登记结算；7 人身份未配对','刷新后余额被裁掉：余额保留 135 但标“刷新后未重读”；建议“不要刷新”记为未采纳','战车、月亮两个挑战详情之后出现一次成功结算：归属“不确定”，不猜','最后一战 3 人全灰仍显示：耐力 0 是读数，但身份未配对，逐人状态不更新'],
+    preset:[], steps:[o('E1:act-1-recruitment-before'),rec('R4'),o('E1:act-1-bloom-before'),o('E1:act-1-bloom-after'),o('E1:act-1-battle-before'),o('E1:act-1-battle-after'),o('E1:act-2-events'),o('E1:act-5-recruitment'),o('E1:act-9-refresh-before'),rec('R3'),o('E1:act-9-refresh-after'),o('E1:chariot-challenge'),o('E1:moon-challenge'),o('E1:final-battle'),o('E1:unfinished-challenge-warning')] },
+  { title:'重复读取不重复入账',
+    intro:'快捷键重读会把同一页面再送进来一次。先走到 S12，然后把 S13、S15、S16 各读两遍。',
+    watch:['账本多出三条“重复读取”，局面不变','本分支结算记录始终 1 条，获得记录始终 1 条','对照模型把奖励加了三次、等级加了两次'],
+    preset: upTo('S12'), steps:[o('S13'),dup(),o('S14'),o('S15'),dup(),o('S16'),dup(),o('S17')] },
+  { title:'开战前与结算的绑定',
+    intro:'结算页不显示挑战标题，归属只能靠之前看过的开战前页面。合成用例，标题借自 E1 的两张圣牌详情。',
+    watch:['看过两个挑战详情再结算：归属“不确定”，不猜左边第一个','没有开战前页面就失败：归属“未知挑战”','开战前→失败→开战前→失败：同一挑战两次结算，本局记录里额外尝试 1 次','每次结算后余额与未出现的耐力都标“结算后未重读”'],
+    preset: upTo('S16'), steps:[o('合成-开战前-战车'),o('合成-开战前-月亮'),o('合成-结算-成功00:40'),o('合成-失败'),o('合成-开战前-战车'),o('合成-失败'),o('合成-开战前-战车'),o('合成-失败')] },
+  { title:'同幕回溯的分支隔离',
+    intro:'走到 S20（第 4 幕）后合成一次开战前重读，接真实的 S21 失败、S22 暂离，再用合成的回溯结果（假定身份已配对）示范分支机制。回溯后的数值只示范读取流程，不代表游戏的回溯恢复规则。',
+    watch:['回溯结果页开出分支 B：幕次仍是 4，但余额、等级、候选、逐人耐力全部“未知”','灰色“回溯前”值只是提示，可用上方开关关掉','回溯后事件页余额被遮挡：余额仍“未知”，直到详情页读到 140','本局记录保留分支 A 的失败结算和 1 次回溯','剩余回溯次数：S22 读到 2，回溯后不写 1，等待重读'],
+    preset: upTo('S20'), steps:[o('合成-开战前-守护桥段'),o('S21'),o('S22'),o('合成-回溯结果-7人'),o('合成-回溯后事件页-余额不可见'),o('合成-回溯后详情页')] },
+  { title:'缺席不是零值',
+    intro:'从 S16 之后出发（R、S、U、V 各剩 1 格）。V 先在一张完整列表里缺席，再重新出现，然后 R、S、U、V 在结算页读到全灰，最后从战后列表消失。',
+    watch:['V 缺席：耐力保留 1 并标“缺席待核对”，不写 0','V 重新出现：标记清除，上一帧缺席不是耗尽','结算页读到 R、S、U、V 全灰：耐力 0 是读数','战后列表只剩 4 人：缺席与已读到的 0 并存，与用户说明“耗尽后不显示”一致，但不新造“耗尽”状态'],
+    preset: upTo('S16'), steps:[o('合成-开战前-缺V'),o('合成-开战前-全8'),o('合成-结算-四人归零'),o('合成-战后-仅四人')] },
+];
+</script>
+
+<script>
+/* =====================================================================
+ * 页面外壳：只负责调用模块与渲染
+ * ===================================================================== */
+(() => {
+  const L = TheaterLedger, vis = L.vis;
+  let run = L.createRun();
+  let lastChange = null;
+  let activeTab = 0;
+  const progress = SCENARIOS.map(() => 0);
+  let showOld = true;
+
+  const FIELD_LABELS = { act:'幕次', balance:'花朵余额', refresh:'刷新次数', rewindLeft:'剩余回溯次数', crown:'祝福总等级', bloom:'绽放等级', quicken:'激化等级', electro:'感电等级', held:'神秘收获持有数', boons:'已持有神秘收获', rifts:'裂隙入口可见数', cards:'本幕事件候选' };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  function fmtVal(k, v){
+    if (k === 'cards') return v.map(c => `${c[1]} ${c[0]}`).join('，');
+    if (k === 'boons') return v.join('、');
+    return String(v);
+  }
+
+  /* ---- 扁平化与差异 ---- */
+  function flatten(P){
+    const S = P.S, m = {};
+    m['当前分支'] = S.branch;
+    for (const k in FIELD_LABELS){ const f = S.fields[k]; m[FIELD_LABELS[k]] = f ? `${fmtVal(k, f.value)}（${f.src}）` : '未知'; }
+    for (const id of S.charOrder){ const c = S.chars[id]; m[`角色 ${id}`] = `${c.status || '—'} · 耐力 ${c.stamina}（${c.staminaSrc}）${c.lineup ? ' · 本场阵容 ' + c.lineup : ''}${c.absent ? ' · 缺席于 ' + c.absent.src : ''}`; }
+    m['待结算的开战前页面'] = S.pending.map(p => p.title).join('、') || '无';
+    m['本分支结算记录'] = String(S.settlements.length);
+    m['本分支获得记录'] = String(S.acquisitions.length);
+    m['候选（招募/伙伴）'] = S.candidates ? `等级 ${S.candidates.levels.join('/')}（${S.candidates.src}）` : '未知';
+    m['身份未配对的列表'] = S.unidentified ? `${S.unidentified.count} 人（${S.unidentified.src}）` : '无';
+    for (const r of S.recs) m[`建议 ${r.id}「${r.text}」`] = r.status + (r.detail ? '：' + r.detail : '');
+    m['本局记录：回溯次数'] = String(P.record.rewinds);
+    m['本局记录：结算总数'] = String(P.record.settlements.length);
+    return m;
+  }
+  function diffFlat(a, b){
+    const out = [];
+    for (const k of Object.keys(b)){ if (!(k in a)) out.push({ k, from:null, to:b[k] }); else if (a[k] !== b[k]) out.push({ k, from:a[k], to:b[k] }); }
+    for (const k of Object.keys(a)) if (!(k in b)) out.push({ k, from:a[k], to:null });
+    return out;
+  }
+
+  /* ---- 调度 ---- */
+  function apply(action){
+    if (action.type === 'obs') run = L.observe(run, OBS[action.id]);
+    else if (action.type === 'rec') run = L.recommend(run, RECS[action.id]);
+    else if (action.type === 'dup'){ const last = run.entries.slice().reverse().find(e => e.kind === 'obs'); if (last) run = L.observe(run, last.obs); }
+  }
+  function dispatch(action, label){
+    const before = flatten(L.project(run));
+    apply(action);
+    const P = L.project(run);
+    const after = flatten(P);
+    lastChange = { label, diff: diffFlat(before, after), notes: P.S.notes.filter(n => n.seq === run.seq).map(n => n.text) };
+    render();
+  }
+  function resetTo(preset){
+    run = L.createRun();
+    for (const a of preset) apply(a);
+    lastChange = preset.length ? { label:`已重置并快进 ${preset.length} 步（到 ${preset[preset.length - 1].id}）`, diff:[], notes:[] } : null;
+    render();
+  }
+
+  /* ---- 渲染：当前局面 ---- */
+  function fieldHtml(S, prev, k){
+    const f = S.fields[k], fr = L.freshness(S, k);
+    if (!f){
+      let h = `<span class="fresh-unk">未知</span>`;
+      if (showOld && prev && prev.fields[k]) h += ` <span class="old">回溯前：${esc(fmtVal(k, prev.fields[k].value))}（${esc(prev.fields[k].src)}）</span>`;
+      return h;
+    }
+    let h = `<span class="v">${esc(fmtVal(k, f.value))}</span><span class="src">${esc(f.src)}</span>`;
+    if (fr.state === 'stale') h += ` <span class="fresh-stale">可能陈旧：${esc(fr.reason)}（${esc(fr.since)} 之后）</span>`;
+    else h += ` <span class="fresh-ok">已确认</span>`;
+    return h;
+  }
+  function kv(S, prev, keys){
+    return `<dl class="kv">${keys.map(k => `<dt>${FIELD_LABELS[k]}</dt><dd>${fieldHtml(S, prev, k)}</dd>`).join('')}</dl>`;
+  }
+  function renderState(P){
+    const S = P.S, prev = showOld ? P.prev : null, R = P.record;
+    const binfo = run.branches.find(b => b.id === run.current);
+    document.getElementById('branch-title').textContent = binfo.from ? `分支 ${S.branch}（由 ${binfo.openedBy} 回溯开出，上一分支 ${binfo.from}）` : `分支 ${S.branch}`;
+    document.getElementById('counts').textContent = `账本 ${run.entries.length} 条 · 本分支重复读取 ${S.dupCount} 次 · 拒判 ${S.rejected} 次`;
+
+    const cards = [];
+    cards.push(`<div class="card"><h3>进度与资源</h3>${kv(S, prev, ['act','balance','refresh','rewindLeft'])}</div>`);
+    cards.push(`<div class="card"><h3>祝福与神秘收获</h3>${kv(S, prev, ['crown','bloom','quicken','electro','held','boons'])}</div>`);
+    // 候选与待结算
+    let ev = `<div class="card"><h3>本幕候选与待结算</h3>${kv(S, prev, ['cards','rifts'])}`;
+    ev += `<dl class="kv" style="margin-top:4px"><dt>招募/伙伴候选</dt><dd>${S.candidates ? `<span class="v">等级 ${S.candidates.levels.join(' / ')}</span><span class="src">${esc(S.candidates.src)}</span> <span class="note">候选不等于已加入</span>` : '<span class="fresh-unk">未知</span>'}</dd>`;
+    ev += `<dt>待结算的开战前页面</dt><dd>${S.pending.length ? S.pending.map(p => `<span class="v">${esc(p.title)}</span><span class="src">${esc(p.src)} · 奖励 ${p.reward} · 明星 ${esc(p.star)}</span>`).join('<br>') + (S.pending.length > 1 ? ' <span class="flag">多于一个，下次结算归属将“不确定”</span>' : '') : '<span class="empty">无</span>'}</dd></dl></div>`;
+    cards.push(ev);
+
+    // 角色
+    let rows = '';
+    for (const id of S.charOrder){
+      const c = S.chars[id], fr = L.staminaFreshness(S, c);
+      const flags = [];
+      if (c.lineup) flags.push(`<span class="tag">本场阵容 ${esc(c.lineup)}</span>`);
+      if (c.absent) flags.push(`<span class="flag">缺席于 ${esc(c.absent.src)}，待核对</span>`);
+      if (fr.state === 'stale' && !c.absent) flags.push(`<span class="fresh-stale">可能陈旧：${esc(fr.reason)}</span>`);
+      if (c.stamina === 0) flags.push(`<span class="tag">两格全灰：耐力 0 是读数</span>`);
+      rows += `<tr><td><b>${esc(id)}</b></td><td>${esc(c.status || '—')}</td><td><span class="v">${c.stamina}</span> 格</td><td class="small muted">${esc(c.staminaSrc)}</td><td>${flags.join(' ')}</td></tr>`;
+    }
+    if (prev) for (const id of prev.charOrder){ if (S.chars[id]) continue; const c = prev.chars[id]; rows += `<tr class="hint-row"><td>${esc(id)}</td><td>未知</td><td>未知</td><td class="small">回溯前：${esc(c.status || '—')} · ${c.stamina} 格（${esc(c.staminaSrc)}）</td><td></td></tr>`; }
+    let ch = `<div class="card wide"><h3>当前角色状态（本局参演名单中已识别身份的角色）</h3>`;
+    ch += rows ? `<table><thead><tr><th>角色</th><th>状态</th><th>耐力</th><th>来源</th><th>标记</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">本分支尚未读到任何已配对身份的角色。</p>`;
+    if (S.unidentified){ const u = S.unidentified; ch += `<p class="small" style="margin-top:8px"><b>最近一次身份未配对的列表：</b>${esc(u.src)}（${u.kind === 'lineup' ? '本场阵容' : u.kind === 'avail+standby' ? '可出战 + 待命' : '可出战'}${u.coverage === 'partial' ? '，列表不完整' : ''}）：${u.count} 人可见，耐力 ${u.stamina.join('、')}${u.standbyVisible ? `；待命区可见 ${u.standbyVisible} 张` : ''}。只记人数与分布，不更新逐人状态。</p>`; }
+    ch += `</div>`;
+    cards.push(ch);
+
+    // 本分支结算与获得
+    let sg = `<div class="card"><h3>本分支结算记录</h3>`;
+    sg += S.settlements.length ? `<table><thead><tr><th>结果</th><th>用时</th><th>奖励</th><th>目标</th><th>挑战归属</th><th>证据</th></tr></thead><tbody>${S.settlements.map(s => `<tr><td><b>${esc(s.outcome)}</b></td><td>${s.time || '—'}</td><td>${s.reward != null ? s.reward : '—'}</td><td>${s.marks ? s.marks.join('') : '—'}</td><td>${esc(s.challenge.title)} <span class="tag ${s.challenge.confidence === '推定' ? 'ok' : 'no'}">${esc(s.challenge.confidence)}</span></td><td class="small muted">${s.evidence.map(esc).join('、')}</td></tr>`).join('')}</tbody></table>` : `<p class="empty">无</p>`;
+    sg += `<h3 style="margin-top:10px">本分支获得记录</h3>`;
+    sg += S.acquisitions.length ? `<ul class="small" style="margin:0">${S.acquisitions.map(a => `<li>「${esc(a.title)}」<span class="src">${esc(a.src)}</span>${a.flag ? ` <span class="flag">${esc(a.flag)}</span>` : ''}</li>`).join('')}</ul>` : `<p class="empty">无</p>`;
+    if (S.flags.length) sg += `<div style="margin-top:8px">${S.flags.map(f => `<div class="flag" style="display:block;margin:2px 0">${esc(f)}</div>`).join('')}</div>`;
+    sg += `</div>`;
+    cards.push(sg);
+
+    // 本局记录
+    let rr = `<div class="card"><h3>本局记录（跨分支）</h3><dl class="kv"><dt>回溯次数</dt><dd><span class="v">${R.rewinds}</span></dd><dt>分支</dt><dd>${R.branches.map(b => `${b.id}${b.from ? `（由 ${esc(b.openedBy)} 自 ${b.from} 开出）` : ''}${b.id === run.current ? ' ← 当前' : ''}`).join('；')}</dd><dt>结算总数</dt><dd><span class="v">${R.settlements.length}</span></dd></dl>`;
+    const ch2 = Object.values(R.byChallenge);
+    if (ch2.length){
+      rr += `<table style="margin-top:6px"><thead><tr><th>挑战</th><th>结算次数</th><th>额外尝试</th><th>明细</th></tr></thead><tbody>`;
+      for (const c of ch2){ const known = c.title !== '未知挑战' && !c.title.includes(' / ') && !c.title.includes('不可见'); rr += `<tr><td>${esc(c.title)}</td><td>${c.list.length}</td><td>${known ? c.list.length - 1 : '<span class="muted">归属不明，无法计</span>'}</td><td class="small muted">${c.list.map(s => `${s.outcome}${s.time ? ' ' + s.time : ''}·分支 ${s.branch}`).join('；')}</td></tr>`; }
+      rr += `</tbody></table>`;
+    }
+    rr += `</div>`;
+    cards.push(rr);
+
+    // 建议
+    let rc = `<div class="card"><h3>建议（独立列表，从不写入局面）</h3>`;
+    rc += S.recs.length ? `<table><thead><tr><th>编号</th><th>建议</th><th>状态</th><th>说明</th></tr></thead><tbody>${S.recs.map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.text)}</td><td><span class="tag ${r.status === '与实际一致' ? 'ok' : r.status === '未采纳' ? 'no' : ''}">${esc(r.status)}</span></td><td class="small">${esc(r.detail || '')}</td></tr>`).join('')}</tbody></table>` : `<p class="empty">本分支没有建议。</p>`;
+    rc += `</div>`;
+    cards.push(rc);
+
+    // 对照
+    const N = L.projectNaive(run);
+    const diffs = [];
+    const cmp = (label, a, b) => { if (String(a) !== String(b)) diffs.push([label, a, b]); };
+    const fv = k => S.fields[k] ? String(S.fields[k].value) : '未知';
+    const nv = v => v === null || v === undefined ? '未知' : String(v);
+    cmp('幕次', fv('act'), nv(N.act)); cmp('花朵余额', fv('balance'), nv(N.balance)); cmp('刷新次数', fv('refresh'), nv(N.refresh));
+    cmp('祝福总等级', fv('crown'), nv(N.crown)); cmp('绽放', fv('bloom'), nv(N.bloom)); cmp('激化', fv('quicken'), nv(N.quicken)); cmp('感电', fv('electro'), nv(N.electro));
+    const allIds = new Set([...S.charOrder, ...Object.keys(N.chars)]);
+    for (const id of allIds){ const c = S.chars[id], n = N.chars[id]; cmp(`角色 ${id}`, c ? `${c.status || '—'} ${c.stamina} 格` : '未知', n ? `${n.status} ${n.stamina} 格` : '未知'); }
+    cmp('结算记录数', S.settlements.length, N.settlements); cmp('获得记录数', S.acquisitions.length, N.acquisitions);
+    let cp = `<div class="card wide"><h3>对照：按直觉记账的朴素快照（事件加减、缺席即耗尽、建议即执行、回溯不分支、重复帧照记）</h3>`;
+    cp += diffs.length ? `<table><thead><tr><th>字段</th><th>本模型（当前分支）</th><th>朴素快照</th></tr></thead><tbody>${diffs.map(d => `<tr><td class="muted">${esc(d[0])}</td><td>${esc(d[1])}</td><td>${esc(d[2])}</td></tr>`).join('')}</tbody></table>` : `<p class="empty">两种模型目前一致。</p>`;
+    cp += `</div>`;
+    cards.push(cp);
+
+    document.getElementById('state').innerHTML = cards.join('');
+  }
+
+  /* ---- 渲染：刚才发生了什么 ---- */
+  function renderChanges(){
+    const el = document.getElementById('changes');
+    if (!lastChange){ el.innerHTML = `<span class="empty">还没有操作。</span>`; return; }
+    let h = `<p><b>${esc(lastChange.label)}</b></p>`;
+    if (lastChange.notes.length) h += `<ul class="chg">${lastChange.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`;
+    if (lastChange.diff.length){
+      h += `<table style="margin-top:6px"><thead><tr><th>字段</th><th>之前</th><th>之后</th></tr></thead><tbody>`;
+      for (const d of lastChange.diff) h += `<tr><td class="muted">${esc(d.k)}</td><td>${d.from === null ? '<span class="muted">—</span>' : esc(d.from)}</td><td><b>${d.to === null ? '<span class="muted">—</span>' : esc(d.to)}</b></td></tr>`;
+      h += `</tbody></table>`;
+    } else if (lastChange.notes.length === 0) h += `<p class="muted small">局面没有变化。</p>`;
+    else h += `<p class="muted small">局面字段没有变化。</p>`;
+    el.innerHTML = h;
+  }
+
+  /* ---- 渲染：自由操作按钮 ---- */
+  function obsButton(id){
+    const ob = OBS[id];
+    const cls = ob.source === '合成' ? 'btn syn' : 'btn';
+    return `<button class="${cls}" data-obs="${esc(id)}" title="${esc(ob.note || '')}">${esc(id)} <span class="muted small">${esc(L.PAGE_LABEL[ob.page])}</span></button>`;
+  }
+  function renderButtons(){
+    const by = b => Object.keys(OBS).filter(id => OBS[id].batch === b);
+    document.getElementById('btn-S').innerHTML = by('S').map(obsButton).join('');
+    document.getElementById('btn-E1').innerHTML = by('E1').map(obsButton).join('');
+    document.getElementById('btn-SYN').innerHTML = by('合成').map(obsButton).join('');
+    document.getElementById('btn-REC').innerHTML = Object.values(RECS).map(r => `<button class="btn rec" data-rec="${r.id}">${r.id} 建议：${esc(r.text)}</button>`).join('');
+  }
+
+  /* ---- 渲染：情景 ---- */
+  function actionLabel(a){
+    if (a.type === 'obs') return `${a.id} <span class="muted small">${L.PAGE_LABEL[OBS[a.id].page]}${OBS[a.id].source === '合成' ? ' · 合成' : ''}</span>`;
+    if (a.type === 'rec') return `建议 ${a.id}：${esc(RECS[a.id].text)} <span class="muted small">只进账本</span>`;
+    return `重读当前页面 <span class="muted small">重复帧</span>`;
+  }
+  function renderScenario(){
+    document.getElementById('tabs').innerHTML = SCENARIOS.map((s, i) => `<div class="tab ${i === activeTab ? 'active' : ''}" data-tab="${i}">${i + 1}. ${esc(s.title)}</div>`).join('');
+    const s = SCENARIOS[activeTab], p = progress[activeTab];
+    let h = `<p>${esc(s.intro)}</p><p class="small"><b>观察要点：</b></p><ul class="small">${s.watch.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`;
+    h += `<div class="toolbar"><button class="btn primary" data-start="1">${p === 0 ? '开始本情景（重置并快进）' : '从头开始本情景'}</button>${s.preset.length ? `<span class="small muted">开始时先快进 ${s.preset.length} 步到 ${esc(s.preset[s.preset.length - 1].id)}。</span>` : ''}${p >= s.steps.length && p > 0 ? `<span class="small" style="color:var(--ok)">情景已走完。可继续自由操作。</span>` : ''}</div>`;
+    h += `<div class="steps">${s.steps.map((a, i) => `<button class="btn ${i < p ? '' : i === p ? 'next' : ''} ${a.type === 'rec' ? 'rec' : ''} ${a.type === 'obs' && OBS[a.id].source === '合成' ? 'syn' : ''}" data-step="${i}" ${i === p && started[activeTab] ? '' : 'disabled'}><span class="n">${i + 1}.</span>${actionLabel(a)}</button>`).join('')}</div>`;
+    document.getElementById('scenario').innerHTML = h;
+  }
+  const started = SCENARIOS.map(() => false);
+
+  /* ---- 渲染：账本 ---- */
+  function summarize(ob){
+    const parts = [];
+    if (vis(ob.act)) parts.push(`第 ${ob.act} 幕`);
+    if (vis(ob.balance)) parts.push(`余额 ${ob.balance}`);
+    if (vis(ob.refresh)) parts.push(`刷新 ${ob.refresh}`);
+    if (vis(ob.crown)) parts.push(`总等级 ${ob.crown}`);
+    if (vis(ob.bloom) || vis(ob.quicken) || vis(ob.electro)) parts.push(`绽/激/感 ${vis(ob.bloom) ? ob.bloom : '–'}/${vis(ob.quicken) ? ob.quicken : '–'}/${vis(ob.electro) ? ob.electro : '–'}`);
+    if (ob.branchLevels) parts.push('分支等级 ' + Object.entries(ob.branchLevels).map(([k, v]) => k + v).join(' '));
+    if (vis(ob.held)) parts.push(`持有 ${ob.held}`);
+    if (vis(ob.boons)) parts.push(ob.boons.join('、'));
+    if (vis(ob.cards)) parts.push(`候选 ${ob.cards.map(c => c[1] + c[0]).join('，')}`);
+    if (ob.challenge) parts.push(`挑战 ${vis(ob.challenge.title) ? ob.challenge.title : '（标题不可见）'} · 奖励 ${ob.challenge.reward} · 明星 ${ob.challenge.star}`);
+    if (ob.result) parts.push(`${vis(ob.result.outcome) ? ob.result.outcome : '结果不可见'}${vis(ob.result.time) ? ' ' + ob.result.time : ''}${vis(ob.result.reward) ? ' 奖励 ' + ob.result.reward : ''}${ob.result.marks ? ' ' + ob.result.marks.join('') : ''}`);
+    if (vis(ob.candidates)) parts.push(`候选等级 ${ob.candidates.join('/')}`);
+    if (ob.roster){ const R = ob.roster; parts.push((R.kind === 'lineup' ? '本场阵容 ' : R.kind === 'avail+standby' ? '可出战+待命 ' : '可出战 ') + (R.identified ? R.members.map(m => m.id + m.stamina).join(' ') : `${R.count} 人（身份未配对）耐力 ${R.staminaList.join('')}`) + (R.coverage === 'partial' ? ' · 不完整' : '')); }
+    if (vis(ob.rewindLeft)) parts.push(`剩余回溯 ${ob.rewindLeft}`);
+    if (vis(ob.countdown)) parts.push(`倒计时 ${ob.countdown} 秒`);
+    if (vis(ob.rifts)) parts.push(`裂隙入口 ${ob.rifts}`);
+    if (ob.acquired) parts.push(`获得「${ob.acquired.title}」`);
+    return parts.join(' · ') || (ob.note || '');
+  }
+  function renderLedger(){
+    if (!run.entries.length){ document.getElementById('ledger').innerHTML = `<span class="empty">账本为空。</span>`; return; }
+    let h = `<table class="ledger"><thead><tr><th>#</th><th>分支</th><th>类型</th><th>来源</th><th>页面</th><th>摘要</th></tr></thead><tbody>`;
+    for (const e of run.entries){
+      const other = e.branch !== run.current;
+      if (e.kind === 'rec') h += `<tr class="rec ${other ? 'other' : ''}"><td>${e.seq}</td><td>${e.branch}</td><td>建议</td><td>${esc(e.rec.id)}</td><td>—</td><td>${esc(e.rec.text)}（不改事实）</td></tr>`;
+      else h += `<tr class="${e.dup ? 'dup' : ''} ${other ? 'other' : ''}"><td>${e.seq}</td><td>${e.branch}</td><td>${e.dup ? '重复读取' : e.obs.page === 'unknown' ? '拒判' : '观测'}</td><td>${esc(e.obs.source)}${e.obs.batch !== '合成' ? ' · ' + esc(e.obs.batch) : ''} <b>${esc(e.obs.id)}</b></td><td>${esc(L.PAGE_LABEL[e.obs.page])}</td><td>${esc(summarize(e.obs))}</td></tr>`;
+    }
+    h += `</tbody></table><p class="note">灰色行属于已回溯的旧分支，只作历史；斜体行是重复读取；紫色行是建议。</p>`;
+    document.getElementById('ledger').innerHTML = h;
+  }
+
+  function render(){
+    const P = L.project(run);
+    renderState(P); renderChanges(); renderScenario(); renderLedger();
+  }
+
+  /* ---- 事件 ---- */
+  document.addEventListener('click', ev => {
+    const t = ev.target.closest('button, .tab'); if (!t) return;
+    if (t.dataset.obs){ dispatch({ type:'obs', id: t.dataset.obs }, `观测 ${t.dataset.obs}（${L.PAGE_LABEL[OBS[t.dataset.obs].page]}）`); return; }
+    if (t.dataset.rec){ dispatch({ type:'rec', id: t.dataset.rec }, `发出建议 ${t.dataset.rec}：${RECS[t.dataset.rec].text}`); return; }
+    if (t.id === 'btn-dup'){ dispatch({ type:'dup' }, '重读当前页面（重复帧）'); return; }
+    if (t.id === 'btn-undo'){ run = L.undo(run); lastChange = { label:'撤销上一步', diff:[], notes:[] }; render(); return; }
+    if (t.id === 'btn-reset'){ run = L.createRun(); lastChange = null; progress.fill(0); started.fill(false); render(); return; }
+    if (t.dataset.tab !== undefined){ activeTab = Number(t.dataset.tab); renderScenario(); return; }
+    if (t.dataset.start){ const s = SCENARIOS[activeTab]; progress[activeTab] = 0; started[activeTab] = true; resetTo(s.preset); return; }
+    if (t.dataset.step !== undefined){
+      const i = Number(t.dataset.step), s = SCENARIOS[activeTab]; if (i !== progress[activeTab]) return;
+      const a = s.steps[i]; progress[activeTab] = i + 1;
+      dispatch(a, `情景 ${activeTab + 1} 第 ${i + 1} 步：` + (a.type === 'obs' ? `观测 ${a.id}（${L.PAGE_LABEL[OBS[a.id].page]}）` : a.type === 'rec' ? `发出建议 ${a.id}：${RECS[a.id].text}` : '重读当前页面（重复帧）'));
+      return;
+    }
+  });
+  document.getElementById('showOld').addEventListener('change', e => { showOld = e.target.checked; render(); });
+
+  renderButtons(); render();
+
+  // 自检入口：在控制台调用 __replay(n) 可跑完第 n 个情景并返回扁平局面
+  window.__replay = n => { const s = SCENARIOS[n]; run = L.createRun(); for (const a of s.preset) apply(a); for (const a of s.steps) apply(a); render(); return flatten(L.project(run)); };
+  window.__state = () => L.project(run);
+})();
+</script>
+</body>
+</html>
