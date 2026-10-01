@@ -1,0 +1,40 @@
+{
+  "_comment": "人工核验登记（当期客户端画面 -> 规则包条目）。只登记画面上能直接看到的字段；fields 说明核验了什么。截图见主检出 docs/research/assets/game screenshots/（未入库）。",
+  "entries": [
+    {
+      "id": "current/绽放/L1",
+      "verified_on": "2026-10-01",
+      "evidence": ["05-bloom-blessing-tree-preview.png (G1)"],
+      "fields": ["title", "text-full"],
+      "note": "局前“辉彩祝福详情”树预览：标题与完整文字与快照逐字一致；同时可见两侧各有一个“进阶”节点"
+    },
+    {
+      "id": "current/激化/L1",
+      "verified_on": "2026-10-01",
+      "evidence": ["13-quicken-blessing-acquired.png (G2)", "19-performance-details-blessing-summary.png (G4)"],
+      "fields": ["title", "text-brief"],
+      "note": "获得结果页（简要说明开启）与汇总页“体系增强”行；简要文字去掉了数值与冷却，不是逐字一致"
+    },
+    {
+      "id": "current/激化/L2/1",
+      "verified_on": "2026-10-01",
+      "evidence": ["19-performance-details-blessing-summary.png (G4)"],
+      "fields": ["text-brief"],
+      "note": "汇总页“额外效果”行与分支1文字去数值后一致；标题“激化·初阶丰雷”未在画面出现，只由摘要推断路径"
+    },
+    {
+      "id": "current/boon/伙伴·即兴特邀",
+      "verified_on": "2026-10-01",
+      "evidence": ["18-performance-details-mystery-boons.png (G3)"],
+      "fields": ["title", "text-full"],
+      "note": "持有列表卡片，标题与文字逐字一致"
+    },
+    {
+      "id": "current/boon/惊喜·近价交换",
+      "verified_on": "2026-10-01",
+      "evidence": ["18-performance-details-mystery-boons.png (G3)"],
+      "fields": ["title", "text-full"],
+      "note": "持有列表卡片，标题与文字逐字一致"
+    }
+  ]
+}

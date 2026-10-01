@@ -1,0 +1,4284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>规则包与标题匹配原型</title>
+<style>
+  :root { --accent: #2f6f5e; --ink: #1f2420; --muted: #6b716d; --line: #d9ded9; --bg: #fbfbf9; --panel: #ffffff; --warn: #a65b00; --bad: #a12b2b; --ok: #2f6f5e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; }
+  header, main { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+  header { padding-top: 28px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 0 0 10px; color: var(--accent); }
+  h3 { font-size: 15px; margin: 14px 0 6px; }
+  p { margin: 6px 0; }
+  .q { color: var(--ink); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .tag { display: inline-block; padding: 0 7px; border-radius: 10px; font-size: 12px; line-height: 20px; background: #eef2ef; color: var(--accent); margin-right: 4px; }
+  .tag.warn { background: #fff3e4; color: var(--warn); }
+  .tag.bad { background: #fde9e9; color: var(--bad); }
+  .tag.ok { background: #e6f2ee; color: var(--ok); }
+  .tag.grey { background: #eee; color: var(--muted); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin: 16px 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .card { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 10px 12px; margin: 8px 0; background: #fff; }
+  .card.ambiguous { border-left-color: var(--warn); }
+  .card.conflict, .card.unknown { border-left-color: var(--bad); }
+  .status { font-weight: 700; }
+  .status.matched { color: var(--ok); } .status.ambiguous { color: var(--warn); } .status.conflict, .status.unknown { color: var(--bad); }
+  button { font: inherit; font-size: 14px; padding: 6px 12px; border: 1px solid var(--accent); background: #fff; color: var(--accent); border-radius: 6px; cursor: pointer; margin: 3px 4px 3px 0; }
+  button:hover { background: #eef5f2; }
+  button.primary { background: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.done { border-style: dashed; color: var(--muted); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  input[type=text], input[type=number], select, textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  textarea { min-height: 64px; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  .tabs button { border-color: var(--line); color: var(--ink); }
+  .tabs button.active { border-color: var(--accent); background: #eef5f2; color: var(--accent); }
+  .steps button { display: block; width: 100%; text-align: left; }
+  .steps .n { color: var(--muted); margin-right: 6px; }
+  .small { font-size: 13px; color: var(--muted); }
+  .log { font-size: 13px; color: var(--muted); max-height: 160px; overflow: auto; border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 6px; }
+  .mono { font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+  .change { background: #fffbe6; }
+  ul { margin: 4px 0 4px 18px; padding: 0; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>当期规则包：版本管理与标题匹配（可抛弃原型）</h1>
+  <p class="q"><b>问题：</b>把 BWIKI 快照导入成“带版本的候选规则包”之后，只凭画面上的<b>标题、等级、摘要文字</b>，能否准确对应到具体的祝福分支（含父分支路径）和神秘收获规则？同名不同路径、历史重名、等级与身份、实例参数、一次性状态、未知或矛盾的画面，分别怎样落到状态里？换期/改版时，哪些条目的核验会失效？</p>
+  <p class="meta" id="packMeta">规则包未注入。请运行 <span class="mono">python import_bwiki.py --inject demo.html</span>。</p>
+</header>
+<main>
+  <section>
+    <h2>① 当前状态</h2>
+    <div class="grid">
+      <div>
+        <h3>规则包与规则集</h3>
+        <div id="packState"></div>
+        <h3>最近一次匹配</h3>
+        <div id="lastMatch"><p class="small">还没有匹配。</p></div>
+      </div>
+      <div>
+        <h3>辉彩祝福：画面等级 vs 规则身份</h3>
+        <div id="held"></div>
+        <h3>神秘收获实例（第 <span id="actNo">1</span> 幕）</h3>
+        <div id="instances"></div>
+        <h3>持有列表核对</h3>
+        <div id="holding"><p class="small">还没有核对。</p></div>
+      </div>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section>
+    <h2>② 自由操作</h2>
+    <div class="grid">
+      <div>
+        <h3>匹配辉彩祝福（画面观察 → 规则身份）</h3>
+        <div class="row">
+          <div><label>来源页面</label><select id="f-source"><option>获得结果页</option><option>祝福汇总页</option><option>局前树预览</option></select></div>
+          <div><label>反应族（可空）</label><select id="f-family"><option value=""></option></select></div>
+          <div><label>画面等级（可空）</label><select id="f-level"><option value=""></option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+        </div>
+        <label>画面标题（可空）</label><input type="text" id="f-title" placeholder="如：激化·原态">
+        <label>画面摘要/说明文字（可空；去数值的简要文字也可以）</label><textarea id="f-summary"></textarea>
+        <button class="primary" onclick="ui.matchBlessing()">匹配祝福</button>
+        <h3>规则集与规则包</h3>
+        <div class="row">
+          <div><label>规则集</label><select id="f-ruleset"></select></div>
+          <div><label>&nbsp;</label><button onclick="ui.setRuleset()">切换规则集</button></div>
+        </div>
+        <button onclick="ui.loadPack('base')">加载原始包</button>
+        <button onclick="ui.loadPack('synthetic')">加载合成的下一期包</button>
+        <button onclick="ui.showDiff()">显示两包差异</button>
+        <button onclick="ui.reset()">全部重置</button>
+      </div>
+      <div>
+        <h3>神秘收获（标题 → 规则 → 实例）</h3>
+        <label>标题</label><input type="text" id="f-boon-title" placeholder="如：伙伴·即兴特邀">
+        <label>卡片文字（可空）</label><textarea id="f-boon-text"></textarea>
+        <button onclick="ui.matchBoon()">只匹配规则</button>
+        <button class="primary" onclick="ui.acquire()">本幕获得（建实例）</button>
+        <div class="row">
+          <div><label>触发哪个实例</label><select id="f-instance"></select></div>
+          <div><label>&nbsp;</label><button onclick="ui.trigger()">触发一次</button></div>
+        </div>
+        <button onclick="ui.actDone()">本幕战斗结束</button>
+        <button onclick="ui.flowersZero()">可用花朵归零</button>
+        <label>持有列表上看到的标题（逗号分隔）</label><input type="text" id="f-holding" placeholder="伙伴·即兴特邀, 惊喜·近价交换">
+        <div class="row">
+          <div><label>“当前持有” 显示的数字</label><input type="number" id="f-holding-count" value="0"></div>
+          <div><label>&nbsp;</label><button onclick="ui.observe()">核对持有列表</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>③ 引导场景</h2>
+    <p class="small">每个场景从已知初始状态开始；按顺序点按钮，看“① 当前状态”怎么变。标“真实截图”的输入来自用户客户端截图原文；标“合成”的输入是为了暴露边界而编的，不是游戏事实。</p>
+    <div class="tabs" id="tabs"></div>
+    <div id="scenario"></div>
+  </section>
+</main>
+
+<script type="application/json" id="rulepack">
+<!--RULEPACK-START-->
+{
+ "pack_format": 1,
+ "pack_id": "bwiki-theater-rev674516",
+ "source": {
+  "name": "BWIKI 幻想真境剧诗（社区维护，CC BY-NC-SA 4.0）",
+  "url": "https://wiki.biligame.com/ys/幻想真境剧诗",
+  "revision_id": 674516,
+  "snapshot_file": "theater.html",
+  "snapshot_date": "2026-09-17",
+  "sha256": "b2e45b2e25c4ea2f96131cdaa4d1dd2c84f1e9fd03dc4605994a97e60c7e42da",
+  "trust": "第三方候选目录；不是官方注册表，不证明当期全集"
+ },
+ "scope": {
+  "claimed": {
+   "server": "北美服（用户样本）",
+   "client_version": "7.0",
+   "language": "zh-CN",
+   "period": "2026-09"
+  },
+  "period_families": [
+   "绽放",
+   "激化",
+   "感电"
+  ],
+  "note": "scope 是声明，不是核验结果；每个条目各自带 verification"
+ },
+ "imported_at": "2026-10-01T04:36:28+00:00",
+ "importer": "prototypes/rulepack-title-matching/import_bwiki.py",
+ "normalization": [
+  "去掉图片（元素/反应图标），只保留文字",
+  "模板渲染导致的重复词（如“月绽放 月绽放”）折叠为一次",
+  "去掉所有空白（包括不换行空格）"
+ ],
+ "identity": {
+  "blessing": "ruleset_id / family / level / path（path：L1 空，L2/L3 为 1|2，L4 为 1A|1B|2A|2B）；标题与文字是证据，不是主键",
+  "boon": "ruleset_id / boon / title（标题在同一规则集内须唯一，由 check_rulepack.py 保证）"
+ },
+ "rulesets": [
+  {
+   "id": "current",
+   "label": "现行表（快照时点）",
+   "status": "candidate",
+   "source_section": "5.0新增：辉彩祝福 / 神秘收获"
+  },
+  {
+   "id": "legacy-pre-2026-02",
+   "label": "加强历史（2026年2月前）",
+   "status": "retired",
+   "retired_before": "2026-02",
+   "source_section": "加强历史 / 月之四版本",
+   "note": "只含被调整的反应族，不是完整期次快照"
+  },
+  {
+   "id": "legacy-pre-2026-03",
+   "label": "加强历史（2026年3月前）",
+   "status": "retired",
+   "retired_before": "2026-03",
+   "source_section": "加强历史 / 月之五版本",
+   "note": "只含被调整的反应族，不是完整期次快照"
+  },
+  {
+   "id": "legacy-pre-2026-04",
+   "label": "加强历史（2026年4月前）",
+   "status": "retired",
+   "retired_before": "2026-04",
+   "source_section": "加强历史 / 月之五版本",
+   "note": "只含被调整的反应族，不是完整期次快照"
+  }
+ ],
+ "blessings": [
+  {
+   "id": "current/燃烧/L1",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "燃烧·原态",
+   "text": "角色对燃烧伤害的火元素抗性提升70%，触发燃烧反应造成的伤害提升500%。",
+   "text_hash": "4a2b5d114f33",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L2/1",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/燃烧/L1",
+   "title": "燃烧·初阶燎焰",
+   "text": "通过燃烧反应对敌人造成伤害时，将对该敌人进行计数，计数达到6时，将清空计数，释放荒火冲击，造成火元素范围伤害，此效果每4秒至多对同一名敌人触发一次。",
+   "text_hash": "a514a04562b5",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L2/2",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/燃烧/L1",
+   "title": "燃烧·初阶响核",
+   "text": "角色对处于燃烧状态的敌人造成草元素伤害后，额外触发一次助燃响核，造成草元素伤害，此效果每8秒至多触发一次。",
+   "text_hash": "418fcd8e04bf",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L3/1",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/燃烧/L2/1",
+   "title": "燃烧·进阶",
+   "text": "对于燃烧祝福，燃烧反应造成的伤害提升100%。",
+   "text_hash": "3cbeb4022e6e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L3/2",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/燃烧/L2/2",
+   "title": "燃烧·进阶",
+   "text": "对于燃烧祝福，燃烧反应造成的伤害提升100%。",
+   "text_hash": "3cbeb4022e6e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L4/1A",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/燃烧/L3/1",
+   "title": "燃烧·极限火势",
+   "text": "改变荒火冲击的攻击形式：转为连续释放多枚火柱，造成多次火元素伤害，每枚火柱的伤害为原本的荒火冲击的120%，此效果每6秒至多对同一名敌人触发一次。",
+   "text_hash": "2cb81e71e244",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L4/1B",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/燃烧/L3/1",
+   "title": "燃烧·极限温压",
+   "text": "荒火冲击造成的伤害提升100%，且攻击范围获得提升。",
+   "text_hash": "93989bcfc61d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L4/2A",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/燃烧/L3/2",
+   "title": "燃烧·极限协奏",
+   "text": "助燃响核触发后将额外生成2颗助燃响核。以这种方式生成的助燃响核，造成的伤害为原本的70%，此效果每8秒至多触发一次。",
+   "text_hash": "1d840fa8d57a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/燃烧/L4/2B",
+   "ruleset_id": "current",
+   "family": "燃烧",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/燃烧/L3/2",
+   "title": "燃烧·极限独奏",
+   "text": "助燃响核造成的伤害提升50%，且生成间隔降低3秒。",
+   "text_hash": "75983f80ac31",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L1",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "绽放·原态",
+   "text": "触发绽放及月绽放反应时，有50%概率额外产生一枚草原核，且队伍角色触发的绽放、超绽放、烈绽放反应伤害提升150%，队伍角色造成的月绽放反应伤害提升45%。",
+   "text_hash": "526b20a94bad",
+   "in_period": true,
+   "verification": {
+    "status": "verified",
+    "verified_text_hash": "526b20a94bad",
+    "verified_on": "2026-10-01",
+    "evidence": [
+     "05-bloom-blessing-tree-preview.png (G1)"
+    ],
+    "verified_fields": [
+     "title",
+     "text-full"
+    ],
+    "note": "局前“辉彩祝福详情”树预览：标题与完整文字与快照逐字一致；同时可见两侧各有一个“进阶”节点"
+   }
+  },
+  {
+   "id": "current/绽放/L2/1",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/绽放/L1",
+   "title": "绽放·初阶繁盛",
+   "text": "触发绽放及月绽放反应时，必定额外产生一枚草原核。",
+   "text_hash": "ec1771c7d107",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L2/2",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/绽放/L1",
+   "title": "绽放·初阶良种",
+   "text": "每产生一枚草原核，都将在当前场上角色周围生成一枚萦绕种（至多同时存在4枚）：触碰敌人后将被消耗，对其造成草元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "f51265bb281b",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L3/1",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/绽放/L2/1",
+   "title": "绽放·进阶",
+   "text": "对于绽放祝福，队伍角色触发的绽放、超绽放、烈绽放反应伤害提升提高50%，队伍角色造成的月绽放反应伤害提升提高15%。",
+   "text_hash": "3346fd4ab5ea",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L3/2",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/绽放/L2/2",
+   "title": "绽放·进阶",
+   "text": "对于绽放祝福，队伍角色触发的绽放、超绽放、烈绽放反应伤害提升提高50%，队伍角色造成的月绽放反应伤害提升提高15%。",
+   "text_hash": "3346fd4ab5ea",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L4/1A",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/绽放/L3/1",
+   "title": "绽放·极限迸裂",
+   "text": "草原核（包含烈绽放、超绽放）命中敌人或角色造成月绽放反应伤害的攻击命中敌人后，将在敌人的位置额外产生一次荒草迸破，造成草元素范围伤害，此效果每3秒至多触发一次。",
+   "text_hash": "aea1ab53802e",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L4/1B",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/绽放/L3/1",
+   "title": "绽放·极限凝核",
+   "text": "产生草原核时，队伍中所有角色获得18%草元素伤害加成与18%水元素伤害加成，此效果持续10秒，至多叠加4层。",
+   "text_hash": "acc30fb5f24f",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L4/2A",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/绽放/L3/2",
+   "title": "绽放·极限合破",
+   "text": "萦绕种触碰敌人后，将立即消耗所有萦绕种，造成草元素范围伤害，并根据消耗的萦绕种数量提升此次攻击的伤害。此效果每4秒至多触发一次。",
+   "text_hash": "176af1027305",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/绽放/L4/2B",
+   "ruleset_id": "current",
+   "family": "绽放",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/绽放/L3/2",
+   "title": "绽放·极限连奏",
+   "text": "萦绕种触碰敌人后将不再被消耗或对敌人造成伤害，而是在达到数量上限后，向敌人一次性发射，造成多次草元素伤害。此效果每3秒至多触发一次。",
+   "text_hash": "263db5f076c5",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L1",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "激化·原态",
+   "text": "角色对敌人触发原激化、超激化或者蔓激化反应时，将向该敌人发射一枚茂雷飞核，命中敌人后爆炸，造成草元素范围伤害，此效果每6秒至多触发一次。",
+   "text_hash": "325205a5f2af",
+   "in_period": true,
+   "verification": {
+    "status": "verified",
+    "verified_text_hash": "325205a5f2af",
+    "verified_on": "2026-10-01",
+    "evidence": [
+     "13-quicken-blessing-acquired.png (G2)",
+     "19-performance-details-blessing-summary.png (G4)"
+    ],
+    "verified_fields": [
+     "title",
+     "text-brief"
+    ],
+    "note": "获得结果页（简要说明开启）与汇总页“体系增强”行；简要文字去掉了数值与冷却，不是逐字一致"
+   }
+  },
+  {
+   "id": "current/激化/L2/1",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/激化/L1",
+   "title": "激化·初阶丰雷",
+   "text": "受角色触发的原激化反应影响的敌人的雷元素抗性与草元素抗性降低10%，持续8秒。且角色对处于原激化状态下的敌人造成雷元素伤害或草元素伤害后，将降下丰饶落雷，造成雷元素伤害，此效果每6秒至多触发一次。",
+   "text_hash": "de5412823187",
+   "in_period": true,
+   "verification": {
+    "status": "verified",
+    "verified_text_hash": "de5412823187",
+    "verified_on": "2026-10-01",
+    "evidence": [
+     "19-performance-details-blessing-summary.png (G4)"
+    ],
+    "verified_fields": [
+     "text-brief"
+    ],
+    "note": "汇总页“额外效果”行与分支1文字去数值后一致；标题“激化·初阶丰雷”未在画面出现，只由摘要推断路径"
+   }
+  },
+  {
+   "id": "current/激化/L2/2",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/激化/L1",
+   "title": "激化·初阶迸核",
+   "text": "茂雷飞核造成伤害的范围提升，且触发间隔降低2秒。",
+   "text_hash": "4d65a3bafd1d",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L3/1",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/激化/L2/1",
+   "title": "激化·进阶",
+   "text": "对于激化祝福，茂雷飞核造成的伤害提升。",
+   "text_hash": "cfe0e73d096a",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L3/2",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/激化/L2/2",
+   "title": "激化·进阶",
+   "text": "对于激化祝福，茂雷飞核造成的伤害提升。",
+   "text_hash": "cfe0e73d096a",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L4/1A",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/激化/L3/1",
+   "title": "激化·极限碎霆",
+   "text": "丰饶落雷触发间隔期间，角色对处于原激化状态下的敌人造成雷元素伤害或草元素伤害后，将进行计数，每层计数将使下次丰饶落雷造成的伤害提升30%，计数至多叠加10层，降下丰饶落雷时将清空已有的计数。",
+   "text_hash": "ad05d586e2e2",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L4/1B",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/激化/L3/1",
+   "title": "激化·极限雷暴",
+   "text": "改变丰饶落雷的攻击形式：转为释放范围更大的迸发雷暴，且造成的伤害提升200%。",
+   "text_hash": "1516ce947df0",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L4/2A",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/激化/L3/2",
+   "title": "激化·极限锐核",
+   "text": "根据队伍中元素精通最高的角色的元素精通，提升茂雷飞核造成的伤害：每1点元素精通提升25点伤害。",
+   "text_hash": "564d2ef356a4",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/激化/L4/2B",
+   "ruleset_id": "current",
+   "family": "激化",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/激化/L3/2",
+   "title": "激化·极限丰茂",
+   "text": "茂雷飞核命中敌人后，将在角色的位置产生持续9秒的丰茂区域，此效果每7.5秒至多触发一次。角色处于丰茂区域内时，将获得50%雷元素伤害加成和草元素伤害加成。至多同时存在1个丰茂区域。",
+   "text_hash": "b5829a2fa4c7",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L1",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "蒸发·原态",
+   "text": "对敌人触发蒸发反应后，敌人的火元素抗性与水元素抗性降低25%，持续6秒。",
+   "text_hash": "bfd6774ef3e4",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L2/1",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/蒸发/L1",
+   "title": "蒸发·初阶浪涌",
+   "text": "对敌人触发蒸发反应时，将释放浪涌冲击，对命中的敌人造成水元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "4dea0f35dbe1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L2/2",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/蒸发/L1",
+   "title": "蒸发·初阶炽燃",
+   "text": "对敌人触发蒸发反应时，将释放炽燃爆轰，对命中的敌人造成火元素伤害，此效果每3秒至多触发一次。",
+   "text_hash": "e1f6b5ea509a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L3/1",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/蒸发/L2/1",
+   "title": "蒸发·进阶",
+   "text": "对于蒸发祝福，蒸发反应使敌人的火元素抗性与水元素抗性降低的效果提升5%。",
+   "text_hash": "92c5c4c33a22",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L3/2",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/蒸发/L2/2",
+   "title": "蒸发·进阶",
+   "text": "对于蒸发祝福，蒸发反应使敌人的火元素抗性与水元素抗性降低的效果提升5%。",
+   "text_hash": "92c5c4c33a22",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L4/1A",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/蒸发/L3/1",
+   "title": "蒸发·极限浪涌",
+   "text": "对敌人触发蒸发反应时，释放的浪涌冲击强化为极限浪涌：对更大范围的敌人造成更高的水元素伤害。",
+   "text_hash": "f15caa8448b6",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L4/1B",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/蒸发/L3/1",
+   "title": "蒸发·极限原态",
+   "text": "角色对敌人触发蒸发反应造成的伤害提升50%。",
+   "text_hash": "c65e6da08908",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L4/2A",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/蒸发/L3/2",
+   "title": "蒸发·极限炽燃",
+   "text": "对敌人触发蒸发反应时，释放的炽燃爆轰强化为连锁爆轰：炽燃爆轰命中敌人后，将额外释放两次更大范围的爆轰，造成更高的火元素伤害。",
+   "text_hash": "fbaf123d73e8",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/蒸发/L4/2B",
+   "ruleset_id": "current",
+   "family": "蒸发",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/蒸发/L3/2",
+   "title": "蒸发·极限原态",
+   "text": "角色对敌人触发蒸发反应造成的伤害提升50%。",
+   "text_hash": "c65e6da08908",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L1",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "感电·原态",
+   "text": "角色对敌人触发感电及月感电反应后，将产生持续3秒的电涌效果：队伍中所有角色触发感电反应造成的伤害提升250%，月感电反应造成的伤害提升70%。",
+   "text_hash": "da120b4dbd7f",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L2/1",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/感电/L1",
+   "title": "感电·初阶浮雷",
+   "text": "电涌效果持续期间，将生成一个跟随当前场上角色的浮雷攻核，角色的攻击命中敌人后，浮雷攻核将向敌人释放3枚雷弹，造成雷元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "a5e00251c4bd",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L2/2",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/感电/L1",
+   "title": "感电·初阶雳云",
+   "text": "电涌效果持续期间，将生成雳云，每2秒随机进行一次以下形式的攻击：1、雳云落雷：对影响范围内的敌人造成雷元素伤害，为当前场上角色恢复2点元素能量；2、雳云暴雨：对影响范围内的敌人造成水元素伤害，为当前场上角色恢复5%生命值，一次暴雨期间，至多通过这种方式为角色恢复1次生命值。",
+   "text_hash": "450768b33d82",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L3/1",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/感电/L2/1",
+   "title": "感电·进阶",
+   "text": "对于感电祝福，队伍中所有角色触发感电反应造成的伤害提升提高50%，月感电反应造成的伤害提升提高15%。",
+   "text_hash": "04ccd297e2fe",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L3/2",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/感电/L2/2",
+   "title": "感电·进阶",
+   "text": "对于感电祝福，队伍中所有角色触发感电反应造成的伤害提升提高50%，月感电反应造成的伤害提升提高15%。",
+   "text_hash": "04ccd297e2fe",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L4/1A",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/感电/L3/1",
+   "title": "感电·极限多核",
+   "text": "电涌效果持续期间，将额外生成1枚浮雷攻核。",
+   "text_hash": "a12e4d28b0f5",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L4/1B",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/感电/L3/1",
+   "title": "感电·极限射束",
+   "text": "改变浮雷攻核的攻击形式：从3枚雷弹变成蓄雷射束，造成伤害更高的雷元素范围伤害。",
+   "text_hash": "2dc43c64e75b",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L4/2A",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/感电/L3/2",
+   "title": "感电·极致雳雷",
+   "text": "雳云必定降下雳云落雷，且降下落雷的间隔缩短至1秒。",
+   "text_hash": "6f3cfc4136d7",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/感电/L4/2B",
+   "ruleset_id": "current",
+   "family": "感电",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/感电/L3/2",
+   "title": "感电·极致雳雨",
+   "text": "雳云必定降下雳云暴雨，且雳云暴雨对敌人造成的伤害提升120%，对角色造成的治疗效果提升40%。",
+   "text_hash": "6b802a54fff7",
+   "in_period": true,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L1",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冻结·原态",
+   "text": "角色对敌人触发冻结反应后，将产生持续6秒的寒意效果：队伍中所有冰元素角色和水元素角色的暴击伤害提升40%。",
+   "text_hash": "420b570adec3",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L2/1",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/冻结/L1",
+   "title": "冻结·凛冽寒水",
+   "text": "当前场上的冰元素角色对敌人触发冻结反应后，在敌人的位置释放寒水震波，造成水元素范围伤害；当前场上的水元素角色对敌人触发冻结反应后，在敌人位置释放冽冰震波，造成冰元素范围伤害。此效果每6秒至多触发一次，两种震波共同计算冷却时间。",
+   "text_hash": "27aeff460624",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L2/2",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/冻结/L1",
+   "title": "冻结·冰裂之势",
+   "text": "寒意效果持续期间，当前场上的水元素角色或冰元素角色的攻击对敌人造成伤害后，将对该敌人施加一层冰裂效果：该敌人的水元素抗性与冰元素抗性降低8%。此效果持续6秒，至多叠加3层。",
+   "text_hash": "bad1d2dd3ecb",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L3/1",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/冻结/L2/1",
+   "title": "冻结·进阶",
+   "text": "对于冻结祝福，角色获得的水元素与冰元素暴击伤害提升值提高。",
+   "text_hash": "8e8bc7cbcd2a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L3/2",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/冻结/L2/2",
+   "title": "冻结·进阶",
+   "text": "对于冻结祝福，角色获得的水元素与冰元素暴击伤害提升值提高。",
+   "text_hash": "8e8bc7cbcd2a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L4/1A",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/冻结/L3/1",
+   "title": "冻结·极限震波",
+   "text": "寒水震波和冽冰震波命中敌人后，将额外造成2次对应元素伤害。",
+   "text_hash": "3ceb5beb643e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L4/1B",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/冻结/L3/1",
+   "title": "冻结·极限卷漫",
+   "text": "寒水震波和冽冰震波造成伤害的范围提升，且触发间隔降低3秒。",
+   "text_hash": "176b9b213ec7",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L4/2A",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/冻结/L3/2",
+   "title": "冻结·极限冰裂",
+   "text": "敌人被施加的冰裂效果叠加至最高层数后，角色对该敌人造成的冰元素伤害提升50%。",
+   "text_hash": "98650dd0ec47",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冻结/L4/2B",
+   "ruleset_id": "current",
+   "family": "冻结",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/冻结/L3/2",
+   "title": "冻结·极限水蚀",
+   "text": "敌人被施加的冰裂效果叠加至最高层数后，角色对该敌人造成的水元素伤害提升50%。",
+   "text_hash": "14c94e1bdead",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L1",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "融化·原态",
+   "text": "当前场上的火元素角色触发融化反应时，将释放冰霜崩破；当前场上的冰元素角色触发融化反应时，将释放炽升火柱；上述两种效果每4秒至多触发一次。",
+   "text_hash": "08d5d1252aa0",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L2/1",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/融化/L1",
+   "title": "融化·初阶广域",
+   "text": "冰霜崩破和炽升火柱造成的伤害提升60%，且攻击范围提升。",
+   "text_hash": "4e2c7ce30de0",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L2/2",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/融化/L1",
+   "title": "融化·初阶温差",
+   "text": "释放冰霜崩破或炽升火柱时，将获得持续9秒的高度温差效果：角色触发融化反应造成的伤害提升30%。",
+   "text_hash": "fbd10c1ad93d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L3/1",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/融化/L2/1",
+   "title": "融化·进阶",
+   "text": "对于融化祝福，冰霜崩破和炽升火柱造成的伤害提升。",
+   "text_hash": "9f374ba3daf2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L3/2",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/融化/L2/2",
+   "title": "融化·进阶",
+   "text": "对于融化祝福，冰霜崩破和炽升火柱造成的伤害提升。",
+   "text_hash": "9f374ba3daf2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L4/1A",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/融化/L3/1",
+   "title": "融化·极限禁绝",
+   "text": "被冰霜崩破或炽升火柱命中敌人的火元素抗性和冰元素抗性降低40%，持续6秒。",
+   "text_hash": "d381ba20c060",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L4/1B",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/融化/L3/1",
+   "title": "融化·极限连域",
+   "text": "触发融化反应时，将额外释放一次冰霜崩破或炽升火柱。",
+   "text_hash": "d3db9517705f",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L4/2A",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/融化/L3/2",
+   "title": "融化·极限禁绝",
+   "text": "被冰霜崩破或炽升火柱命中敌人的火元素抗性和冰元素抗性降低40%，持续6秒。",
+   "text_hash": "d381ba20c060",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/融化/L4/2B",
+   "ruleset_id": "current",
+   "family": "融化",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/融化/L3/2",
+   "title": "融化·极限骤温",
+   "text": "高度温差效果持续期间，角色造成火元素伤害或冰元素伤害时，暴击伤害提升90%。",
+   "text_hash": "a4612dfefada",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L1",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "超载·原态",
+   "text": "对敌人触发超载反应后，将对该敌人施加易碎效果：敌人的火元素抗性与雷元素抗性降低5.5%，此效果持续12秒，至多叠加4层。",
+   "text_hash": "985b9ff1deaa",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L2/1",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/超载/L1",
+   "title": "超载·初阶爆炎",
+   "text": "角色对处于易碎效果影响下的敌人造成雷元素伤害后，将对场上所有处于易碎效果的敌人释放一枚爆炎火球，造成火元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "f540307f5192",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L2/2",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/超载/L1",
+   "title": "超载·初阶霆击",
+   "text": "角色对处于易碎效果影响下的敌人造成火元素伤害后，将对场上所有处于易碎效果的敌人降下一次霆雷打击，造成雷元素伤害，此效果每6秒至多触发一次。",
+   "text_hash": "f34f76f163d8",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L3/1",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/超载/L2/1",
+   "title": "超载·进阶",
+   "text": "对于超载祝福，易碎效果使敌人的火元素抗性与雷元素抗性降低的效果提升1.5%。",
+   "text_hash": "0ca9161018dc",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L3/2",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/超载/L2/2",
+   "title": "超载·进阶",
+   "text": "对于超载祝福，易碎效果使敌人的火元素抗性与雷元素抗性降低的效果提升1.5%。",
+   "text_hash": "0ca9161018dc",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L4/1A",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/超载/L3/1",
+   "title": "超载·极限轰连",
+   "text": "角色对处于易碎效果影响下的敌人造成雷元素伤害后，释放的爆炎火球数量增加一枚。",
+   "text_hash": "3bdb6ea6b862",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L4/1B",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/超载/L3/1",
+   "title": "超载·极限追燃",
+   "text": "处于易碎效果影响下的敌人被击败时，将额外产生一枚爆炎火球，此效果每2秒至多触发一次。",
+   "text_hash": "6fa41f49cfdc",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L4/2A",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/超载/L3/2",
+   "title": "超载·极限雷阵",
+   "text": "角色对处于易碎效果影响下的敌人造成火元素伤害后，降下的霆雷打击增加一次。",
+   "text_hash": "13d6d2a14ba2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超载/L4/2B",
+   "ruleset_id": "current",
+   "family": "超载",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/超载/L3/2",
+   "title": "超载·极限秘闪",
+   "text": "处于易碎效果影响下的敌人被击败时，将额外降下一次霆雷打击，此效果每3秒至多触发一次。",
+   "text_hash": "2976cb71acd8",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L1",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "超导·原态",
+   "text": "对敌人触发超导反应及星超导反应或造成星超导反应伤害后，将对该敌人施加低阻效果：敌人的冰元素抗性和雷元素抗性降低5%，物理抗性降低10%，此效果持续12秒，至多叠加6层。",
+   "text_hash": "733ed43ac49c",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L2/1",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/超导/L1",
+   "title": "超导·电涌轰击",
+   "text": "角色对处于低阻效果影响下的敌人造成物理伤害后，将额外为其叠加一层低阻效果，同时释放涌现震波，造成物理伤害，每3秒至多通过这种方式触发一次涌现震波。",
+   "text_hash": "13ee81872276",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L2/2",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/超导/L1",
+   "title": "超导·低阻连锁",
+   "text": "角色对处于低阻效果影响下的敌人造成冰元素伤害和雷元素伤害后，将额外为其叠加一层低阻效果，每层低阻效果将使角色对该敌人造成的冰元素伤害和雷元素伤害提升12%，星超导反应伤害提升15%。",
+   "text_hash": "96ca669f9d40",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L3/1",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/超导/L2/1",
+   "title": "超导·进阶",
+   "text": "对于超导祝福，敌人的冰元素抗性和雷元素抗性降低的效果提升1%，物理抗性降低的效果提升2%。",
+   "text_hash": "e98597048a64",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L3/2",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/超导/L2/2",
+   "title": "超导·进阶",
+   "text": "对于超导祝福，敌人的冰元素抗性和雷元素抗性降低的效果提升1%，物理抗性降低的效果提升2%。",
+   "text_hash": "e98597048a64",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L4/1A",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/超导/L3/1",
+   "title": "超导·极限涌震",
+   "text": "对处于最高层数低阻效果影响下的敌人造成物理伤害后，释放的涌现震波伤害提升100%，且伤害范围提升。",
+   "text_hash": "2298439ead1a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L4/1B",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/超导/L3/1",
+   "title": "超导·极限崩阻",
+   "text": "每层低阻效果将使角色对敌人造成的物理伤害提升15%。",
+   "text_hash": "5cae96139a5b",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L4/2A",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/超导/L3/2",
+   "title": "超导·极限返寒",
+   "text": "敌人被施加的低阻效果叠加至最高层数时，将在敌人的位置释放返寒冰破，造成冰元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "096ab172f458",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/超导/L4/2B",
+   "ruleset_id": "current",
+   "family": "超导",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/超导/L3/2",
+   "title": "超导·极限电冲",
+   "text": "敌人被施加的低阻效果叠加至最高层数时，将在敌人的位置释放强电涌现，造成雷元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "82e8528b9cf8",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L1",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "火风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·火，持续6秒：角色触发扩散反应造成的伤害提升80%，角色的攻击力提升9%。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "745ed6a7693e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L2/1",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/火风/L1",
+   "title": "火风·初阶焚风",
+   "text": "当前场上角色的攻击对敌人造成伤害时，将消耗该角色的一部分生命值，释放焚风，基于风之祝祷·火的层数，造成火元素范围伤害，此效果每6秒至多触发一次。",
+   "text_hash": "09f65e5f7d60",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L2/2",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/火风/L1",
+   "title": "火风·初阶炽岚",
+   "text": "队伍中的火元素角色或风元素角色登场时，将根据该角色的元素类型，释放炽岚，基于风之祝祷·火的层数，造成对应元素类型的范围伤害，此效果每5秒至多触发一次。",
+   "text_hash": "178b45ce9894",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L3/1",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/火风/L2/1",
+   "title": "火风·进阶",
+   "text": "对于火风祝福，每层风之祝祷·火使队伍中角色触发扩散反应时造成的伤害提升和攻击力提升提高。",
+   "text_hash": "fe9dbec7c949",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L3/2",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/火风/L2/2",
+   "title": "火风·进阶",
+   "text": "对于火风祝福，每层风之祝祷·火使队伍中角色触发扩散反应时造成的伤害提升和攻击力提升提高。",
+   "text_hash": "fe9dbec7c949",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L4/1A",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/火风/L3/1",
+   "title": "火风·极限焚徊",
+   "text": "队伍中角色的当前生命值提升或降低时，将为队伍进行计数，计数达到4点时将清空计数，并使焚风造成的伤害提升40%，此效果至多叠加3层。",
+   "text_hash": "2b5100937e18",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L4/1B",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/火风/L3/1",
+   "title": "火风·极限燃风",
+   "text": "风之祝祷·火持续期间，当前场上角色造成的伤害提升50%，且当前场上角色生命值低于50%时，将恢复15%生命值，此效果每6秒至多触发一次。",
+   "text_hash": "3fae3ae5eff6",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L4/2A",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/火风/L3/2",
+   "title": "火风·极限炽飏",
+   "text": "根据队伍中的火元素角色和风元素角色数量，提升炽岚造成的伤害，每名角色将使该伤害提升16%，通过这种方式该伤害至多提升64%。",
+   "text_hash": "64a4c50b87dd",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火风/L4/2B",
+   "ruleset_id": "current",
+   "family": "火风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/火风/L3/2",
+   "title": "火风·极限岚烧",
+   "text": "炽岚的触发间隔缩短1秒，且炽岚命中敌人时，每层风之祝祷·火将使敌人的火元素抗性或风元素抗性降低5%，持续8秒。",
+   "text_hash": "b33ee711b6f5",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L1",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "水风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·水，持续6秒：角色触发扩散反应造成的伤害提升80%，角色的生命值上限提升8%。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "fea790ae2427",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L2/1",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/水风/L1",
+   "title": "水风·初阶眷属",
+   "text": "对队伍中的角色进行治疗时，将生成一个跟随场上角色的疗愈水球，持续4.5秒，疗愈水球将记录治疗的生命值回复量，持续时间结束后疗愈水球爆炸，基于记录的治疗量和风之祝祷·水的层数对周围的敌人造成水元素范围伤害，每5秒至多生成一个疗愈水球。",
+   "text_hash": "64d944dd67f9",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L2/2",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/水风/L1",
+   "title": "水风·初阶水瀑",
+   "text": "角色获得风之祝祷·水时将生成1枚水凝核，其数量达到3枚后，角色的攻击命中敌人时，将消耗所有水凝核，在敌人的位置释放水瀑旋涡，持续3.5秒，牵引附近的敌人，并基于风之祝祷·水的层数造成水元素范围伤害，每8秒至多生成一个水瀑旋涡。",
+   "text_hash": "6ac4a4c090e0",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L3/1",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/水风/L2/1",
+   "title": "水风·进阶",
+   "text": "对于水风祝福，每层风之祝祷·水使队伍中角色触发扩散反应时造成的伤害提升和生命值上限提升获得提高。",
+   "text_hash": "062b2e30b750",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L3/2",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/水风/L2/2",
+   "title": "水风·进阶",
+   "text": "对于水风祝福，每层风之祝祷·水使队伍中角色触发扩散反应时造成的伤害提升和生命值上限提升获得提高。",
+   "text_hash": "062b2e30b750",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L4/1A",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/水风/L3/1",
+   "title": "水风·极限水爆",
+   "text": "疗愈水球的爆炸伤害提升60%，爆炸伤害范围提升，且每层风之祝祷·水都将为队伍中所有角色提升10%治疗加成。",
+   "text_hash": "fcb97b19ecb3",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L4/1B",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/水风/L3/1",
+   "title": "水风·极限疗愈",
+   "text": "获得风之祝祷·水时，当前场上角色恢复15%生命值，此效果每3秒至多触发一次。",
+   "text_hash": "054595003c85",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L4/2A",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/水风/L3/2",
+   "title": "水风·极限漩风",
+   "text": "每层风之祝祷·水将使队伍中所有角色获得15%风元素伤害加成。",
+   "text_hash": "28e6af48d391",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水风/L4/2B",
+   "ruleset_id": "current",
+   "family": "水风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/水风/L3/2",
+   "title": "水风·极限凝核",
+   "text": "进入战斗时，角色获得3枚水凝核，水瀑旋涡造成的伤害提升60%，攻击范围提升。",
+   "text_hash": "5dfebbca0509",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L1",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "雷风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·雷，持续6秒：角色触发扩散反应造成的伤害提升80%，且每次获得风之祝祷·雷时为队伍中所有角色恢复2点元素能量，此效果每3秒至多触发一次。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "dcc37058bdaa",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L2/1",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/雷风/L1",
+   "title": "雷风·初阶迅切",
+   "text": "角色施放元素爆发时，将生成1层迅切印记，至多生成4层。当前场上角色的攻击命中敌人时，将消耗1层迅切印记，释放一枚迅切雷刃，基于风之祝祷·雷的层数，对路径上的敌人造成雷元素伤害，每4秒至多生成一个迅切雷刃。",
+   "text_hash": "367d49e31d10",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L2/2",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/雷风/L1",
+   "title": "雷风·初阶霆跃",
+   "text": "风之祝祷·雷持续期间，当前场上角色的跳跃能力提升，且下落攻击命中敌人时将释放霆跃雷击，基于风之祝祷·雷的层数，造成雷元素范围伤害，此效果每2秒至多触发一次。",
+   "text_hash": "960332d3f0b9",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L3/1",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/雷风/L2/1",
+   "title": "雷风·进阶",
+   "text": "对于雷风祝福，每层风之祝祷·雷使角色触发扩散反应造成的伤害提升提高20%，队伍中所有角色恢复的元素能量提升1点。",
+   "text_hash": "9006487c5693",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L3/2",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/雷风/L2/2",
+   "title": "雷风·进阶",
+   "text": "对于雷风祝福，每层风之祝祷·雷使角色触发扩散反应造成的伤害提升提高20%，队伍中所有角色恢复的元素能量提升1点。",
+   "text_hash": "9006487c5693",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L4/1A",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/雷风/L3/1",
+   "title": "雷风·极限爆发",
+   "text": "每层风之祝祷·雷使队伍中所有角色的元素爆发造成的伤害提升20%。",
+   "text_hash": "cc1e0e8ec479",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L4/1B",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/雷风/L3/1",
+   "title": "雷风·极限迅切",
+   "text": "迅切雷刃造成的伤害提升100%，且伤害范围提升。",
+   "text_hash": "ef00d93a420f",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L4/2A",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/雷风/L3/2",
+   "title": "雷风·极限霆落",
+   "text": "每层风之祝祷·雷使当前场上角色的下落攻击伤害提升20%。",
+   "text_hash": "f4ea71a96dab",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷风/L4/2B",
+   "ruleset_id": "current",
+   "family": "雷风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/雷风/L3/2",
+   "title": "雷风·极限轰跃",
+   "text": "当前场上角色跳跃时，将在起跳的位置释放极限轰雷：基于风之祝祷·雷的层数对敌人造成雷元素范围伤害，此效果每2秒至多触发一次。",
+   "text_hash": "865bcdb3873d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L1",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冰风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·冰，持续6秒：角色触发扩散反应造成的伤害提升80%，角色的暴击伤害提升16%。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "1a26010ef9b0",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L2/1",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/冰风/L1",
+   "title": "冰风·初阶肃蚀",
+   "text": "风之祝祷·冰持续期间，角色的攻击命中敌人时，将对敌人施加持续5秒的肃蚀效果：基于风之祝祷·冰的层数，每秒受到冰元素伤害。",
+   "text_hash": "79db6585c57b",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L2/2",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/冰风/L1",
+   "title": "冰风·初阶冰岚",
+   "text": "风之祝祷·冰持续期间，每8秒为当前场上角色恢复25点体力，且角色冲刺时释放冰岚，牵引附近的敌人，并基于风之祝祷·冰的层数造成风元素伤害，此效果每8秒至多触发一次",
+   "text_hash": "9b2b8a52cb85",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L3/1",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/冰风/L2/1",
+   "title": "冰风·进阶",
+   "text": "对于冰风祝福，每层风之祝祷·冰使角色触发扩散反应造成的伤害提升提高20%，暴击伤害提升提高4%。",
+   "text_hash": "c5aa8fee35ed",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L3/2",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/冰风/L2/2",
+   "title": "冰风·进阶",
+   "text": "对于冰风祝福，每层风之祝祷·冰使角色触发扩散反应造成的伤害提升提高20%，暴击伤害提升提高4%。",
+   "text_hash": "c5aa8fee35ed",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L4/1A",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/冰风/L3/1",
+   "title": "冰风·极限肃封",
+   "text": "肃蚀效果作用下，敌人受到冰元素伤害的频率提升至每0.5秒1次。",
+   "text_hash": "ea5681b0739b",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L4/1B",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/冰风/L3/1",
+   "title": "冰风·极限冰蚀",
+   "text": "肃蚀效果作用下，敌人的冰元素抗性和风元素抗性降低：每层风之祝祷·冰降低10%。",
+   "text_hash": "295a6b5a6751",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L4/2A",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/冰风/L3/2",
+   "title": "冰风·极限寒攻",
+   "text": "风之祝祷·冰持续期间，当前场上角色恢复体力以及冲刺时释放冰岚的间隔降低4秒。",
+   "text_hash": "bd3780ab30bb",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰风/L4/2B",
+   "ruleset_id": "current",
+   "family": "冰风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/冰风/L3/2",
+   "title": "冰风·极限旋岚",
+   "text": "被冰岚命中的敌人的冰元素抗性和风元素抗性降低：每层风之祝祷·冰降低10%，持续12秒。",
+   "text_hash": "488465d490ee",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L1",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "火晶·原态",
+   "text": "获得火元素结晶反应产生的晶片后，将产生持续9秒的火晶庇佑效果：使队伍中所有角色获得70%火元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "0e868200c647",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L2/1",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/火晶/L1",
+   "title": "火晶·初阶岩破",
+   "text": "火晶庇佑效果持续期间，将间歇性在角色的位置释放岩晶破袭，造成岩元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "de92d05784ea",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L2/2",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/火晶/L1",
+   "title": "火晶·初阶磐轰",
+   "text": "火晶庇佑效果持续期间，角色的普通攻击、重击或下落攻击命中敌人时，将在敌人的位置降下轰转磐岩，造成岩元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "2d348d7e562e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L3/1",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/火晶/L2/1",
+   "title": "火晶·进阶",
+   "text": "对于火晶祝福，角色获得的火元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "c76d3774b678",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L3/2",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/火晶/L2/2",
+   "title": "火晶·进阶",
+   "text": "对于火晶祝福，角色获得的火元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "c76d3774b678",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L4/1A",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/火晶/L3/1",
+   "title": "火晶·极限碎岩",
+   "text": "岩晶破袭命中敌人后的8秒内，该敌人的岩元素抗性和火元素抗性降低30%。",
+   "text_hash": "0b3d0b0e3dc7",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L4/1B",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/火晶/L3/1",
+   "title": "火晶·极限瓦解",
+   "text": "岩晶破袭将额外造成2次岩元素伤害。",
+   "text_hash": "2a6ad671da55",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L4/2A",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/火晶/L3/2",
+   "title": "火晶·极限毅力",
+   "text": "火晶庇佑效果持续期间，角色的攻击力和防御力提升40%，且处于护盾庇护下时，上述效果额外提升40%。",
+   "text_hash": "385e5c89415e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/火晶/L4/2B",
+   "ruleset_id": "current",
+   "family": "火晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/火晶/L3/2",
+   "title": "火晶·极限烈性",
+   "text": "轰转磐岩造成的伤害提升50%，且降下的间隔缩短0.5秒。",
+   "text_hash": "1b93f0b0895a",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L1",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "水晶·原态",
+   "text": "获得水元素结晶反应产生的晶片或触发月结晶反应后，将产生持续9秒的水晶庇佑效果：使队伍中所有角色获得70%水元素伤害加成与岩元素伤害加成，月结晶反应造成的伤害提升75%。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "04bf95dede1d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L2/1",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/水晶/L1",
+   "title": "水晶·初阶岩袭",
+   "text": "水晶庇佑效果持续期间，将间歇性在角色的位置释放岩晶轰袭，造成岩元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "3cafdf7a96f2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L2/2",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/水晶/L1",
+   "title": "水晶·初阶涧石",
+   "text": "水晶庇佑效果持续期间，队伍中水元素角色或岩元素角色受到治疗时，将在敌人的位置降下涧石，造成岩元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "123e92c70528",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L3/1",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/水晶/L2/1",
+   "title": "水晶·进阶",
+   "text": "对于水晶祝福，角色获得的水元素伤害加成与岩元素伤害加成提升提高10%，月结晶反应造成的伤害提升提高15%。",
+   "text_hash": "8e3863324892",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L3/2",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/水晶/L2/2",
+   "title": "水晶·进阶",
+   "text": "对于水晶祝福，角色获得的水元素伤害加成与岩元素伤害加成提升提高10%，月结晶反应造成的伤害提升提高15%。",
+   "text_hash": "8e3863324892",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L4/1A",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/水晶/L3/1",
+   "title": "水晶·极限攻岩",
+   "text": "岩晶轰袭命中敌人后的8秒内，该敌人的岩元素抗性和水元素抗性降低30%。",
+   "text_hash": "4249ad21e717",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L4/1B",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/水晶/L3/1",
+   "title": "水晶·极限瓦解",
+   "text": "岩晶轰袭将额外造成2次岩元素伤害。额外",
+   "text_hash": "11c3283159b4",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L4/2A",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/水晶/L3/2",
+   "title": "水晶·极限坚汛",
+   "text": "水晶庇佑效果持续期间，队伍中所有角色的攻击力提升40%，生命值上限提升30%，且角色处于护盾庇护下时，攻击力额外提升40%，生命值上限额外提升30%。",
+   "text_hash": "40169361caf1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/水晶/L4/2B",
+   "ruleset_id": "current",
+   "family": "水晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/水晶/L3/2",
+   "title": "水晶·极限碎浪",
+   "text": "涧石造成的伤害提升50%，且降下的间隔缩短0.5秒。",
+   "text_hash": "f3bf6bb0ddc5",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L1",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "雷晶·原态",
+   "text": "获得雷元素结晶反应产生的晶片后，将产生持续5秒的雷晶庇佑效果：使队伍中所有角色获得50%雷元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "964019bc06fe",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L2/1",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/雷晶/L1",
+   "title": "雷晶·初阶磐轰",
+   "text": "雷晶庇佑效果持续期间，角色的攻击命中敌人后，将在敌人的位置降下轰转磐岩，造成岩元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "d8ae9e362577",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L2/2",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/雷晶/L1",
+   "title": "雷晶·初阶岩延",
+   "text": "角色每获取2枚雷元素结晶反应产生的晶片，将对附近的一名敌人降下轰转磐岩，造成岩元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "253d14348a03",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L3/1",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/雷晶/L2/1",
+   "title": "雷晶·进阶",
+   "text": "对于雷晶祝福，角色获得的雷元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "0624eb5a4e9e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L3/2",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/雷晶/L2/2",
+   "title": "雷晶·进阶",
+   "text": "对于雷晶祝福，角色获得的雷元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "0624eb5a4e9e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L4/1A",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/雷晶/L3/1",
+   "title": "雷晶·极限崩落",
+   "text": "轰转磐岩命中敌人后的8秒内，该敌人的岩元素抗性降低20%。",
+   "text_hash": "e315f032b5b9",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L4/1B",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/雷晶/L3/1",
+   "title": "雷晶·极限霰石",
+   "text": "轰转磐岩触发后，将额外造成2次岩元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "613fff196060",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L4/2A",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/雷晶/L3/2",
+   "title": "雷晶·极限崩落",
+   "text": "轰转磐岩命中敌人后的8秒内，该敌人的岩元素抗性降低20%。",
+   "text_hash": "e315f032b5b9",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/雷晶/L4/2B",
+   "ruleset_id": "current",
+   "family": "雷晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/雷晶/L3/2",
+   "title": "雷晶·极限霰石",
+   "text": "轰转磐岩触发后，将额外造成2次岩元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "613fff196060",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L1",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冰晶·原态",
+   "text": "获得冰元素结晶反应产生的晶片后，将产生持续9秒的冰晶庇佑效果：使队伍中所有角色获得70%冰元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "ac206ae91a82",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L2/1",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/冰晶/L1",
+   "title": "冰晶·初阶岩袭",
+   "text": "冰晶庇佑效果持续期间，将间歇性在角色的位置释放岩晶强袭，造成岩元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "7dd30d516f74",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L2/2",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/冰晶/L1",
+   "title": "冰晶·初阶冰迸",
+   "text": "冰晶庇佑效果持续期间，队伍中冰元素角色或岩元素角色造成暴击时，将在敌人的位置降下碎冰迸石，造成岩元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "3b197ee9e03e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L3/1",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/冰晶/L2/1",
+   "title": "冰晶·进阶",
+   "text": "对于冰晶祝福，角色获得的冰元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "d85a1d7789d1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L3/2",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/冰晶/L2/2",
+   "title": "冰晶·进阶",
+   "text": "对于冰晶祝福，角色获得的冰元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "d85a1d7789d1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L4/1A",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/冰晶/L3/1",
+   "title": "冰晶·极限攻岩",
+   "text": "岩晶强袭命中敌人后的8秒内，该敌人的岩元素抗性和冰元素抗性降低30%。",
+   "text_hash": "03501f3905eb",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L4/1B",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/冰晶/L3/1",
+   "title": "冰晶·极限瓦解",
+   "text": "岩晶强袭将额外造成2次岩元素伤害。",
+   "text_hash": "daa58e2d5731",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L4/2A",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/冰晶/L3/2",
+   "title": "冰晶·极限锐度",
+   "text": "冰晶庇佑效果持续期间，队伍中所有角色的暴击伤害提升40%，且角色处于护盾庇护下时，暴击伤害额外提升40%。",
+   "text_hash": "c095d5023537",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰晶/L4/2B",
+   "ruleset_id": "current",
+   "family": "冰晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/冰晶/L3/2",
+   "title": "冰晶·极限霜岩",
+   "text": "碎冰迸石造成的伤害提升50%，且降下的间隔缩短0.5秒。",
+   "text_hash": "3103100c883d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L1",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冰草·原态",
+   "text": "敌人被角色冰元素或草元素攻击命中后，将根据对应元素进入霜凝或棘蔓状态，持续10秒。当敌人同时处于霜凝和棘蔓状态时，将产生以下效果：1、敌人受到角色的冰元素伤害和草元素伤害伤害提升45%，持续10秒。2、在敌人周围生成一根存在10秒的寒冰荆棘，持续造成冰元素范围伤害和草元素范围伤害。场上最多同时存在两根寒冰荆棘，此效果每0.5秒至多触发一次。",
+   "text_hash": "727c636830c1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L2/1",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 2,
+   "path": "1",
+   "parent_id": "current/冰草/L1",
+   "title": "冰草·初阶电蔓",
+   "text": "寒冰荆棘范围内，角色的雷元素攻击命中敌人后，寒冰荆棘将转化为一根存在10秒的电气蔓棘，攻击频率提升至每秒1次，且造成1.5倍雷元素范围伤害。",
+   "text_hash": "c2b54f63eea5",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L2/2",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 2,
+   "path": "2",
+   "parent_id": "current/冰草/L1",
+   "title": "冰草·初阶磁棘",
+   "text": "寒冰荆棘范围内，角色的雷元素攻击命中敌人后，寒冰荆棘将转化为磁化荆棘，不再具有攻击效果，但附近一定范围内的敌人受到角色的冰元素、草元素、雷元素与物理攻击伤害提升。场上每存在一根磁化荆棘，将获得45%的上述提升效果，至多提升90%。",
+   "text_hash": "5a3d77d92872",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L3/1",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 3,
+   "path": "1",
+   "parent_id": "current/冰草/L2/1",
+   "title": "冰草·进阶",
+   "text": "对于冰草祝福，敌人受到的冰元素伤害加成和草元素伤害加成与寒冰荆棘造成的伤害提升。",
+   "text_hash": "2fe27958f19d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L3/2",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 3,
+   "path": "2",
+   "parent_id": "current/冰草/L2/2",
+   "title": "冰草·进阶",
+   "text": "对于冰草祝福，敌人受到的冰元素伤害加成和草元素伤害加成与寒冰荆棘造成的伤害提升。",
+   "text_hash": "2fe27958f19d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L4/1A",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "current/冰草/L3/1",
+   "title": "冰草·极限棘群",
+   "text": "电气蔓棘攻击命中敌人后，将使该敌人的雷元素抗性降低30%，持续10秒。",
+   "text_hash": "a0d7d24d28db",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L4/1B",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "current/冰草/L3/1",
+   "title": "冰草·极限棘锐",
+   "text": "电气蔓棘造成的伤害提升40%。",
+   "text_hash": "82d46038026c",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L4/2A",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "current/冰草/L3/2",
+   "title": "冰草·极限冷棘",
+   "text": "每根磁化荆棘使敌人受到角色的冰元素、草元素、雷元素与物理攻击伤害提升效果额外提高22.5%。",
+   "text_hash": "cd41fe6ea188",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/冰草/L4/2B",
+   "ruleset_id": "current",
+   "family": "冰草",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "current/冰草/L3/2",
+   "title": "冰草·极限强磁",
+   "text": "磁化荆棘影响范围内，队伍中角色的元素精通提高300点。",
+   "text_hash": "7e1d1445ea60",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "火晶·原态",
+   "text": "获得结晶反应产生的晶片后，将产生持续5秒的火晶庇佑效果：使队伍中所有角色获得50%火元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "c70688079cfa",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L2/1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-02/火晶/L1",
+   "title": "火晶·初阶迸火",
+   "text": "火晶庇佑效果持续期间，每6秒，将在角色的位置释放迸火冲击，造成火元素范围伤害。",
+   "text_hash": "7a1b4b0e80c1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L2/2",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-02/火晶/L1",
+   "title": "火晶·初阶岩破",
+   "text": "火晶庇佑效果持续期间，每4秒，将在角色的位置释放岩晶破袭，造成岩元素范围伤害。",
+   "text_hash": "42f861e9509f",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L3/1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-02/火晶/L2/1",
+   "title": "火晶·进阶",
+   "text": "对于火晶祝福，角色获得的火元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "c76d3774b678",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L3/2",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-02/火晶/L2/2",
+   "title": "火晶·进阶",
+   "text": "对于火晶祝福，角色获得的火元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "c76d3774b678",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L4/1A",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "legacy-pre-2026-02/火晶/L3/1",
+   "title": "火晶·极限碎火",
+   "text": "迸火冲击命中敌人后的8秒内，该敌人的火元素抗性降低20%。",
+   "text_hash": "f1f523c404ff",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L4/1B",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "legacy-pre-2026-02/火晶/L3/1",
+   "title": "火晶·极限殉燃",
+   "text": "迸火冲击触发后，将额外造成2次火元素伤害，此效果每6秒至多触发一次。",
+   "text_hash": "4d10e90038b7",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L4/2A",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "legacy-pre-2026-02/火晶/L3/2",
+   "title": "火晶·极限碎岩",
+   "text": "岩晶破袭命中敌人后的8秒内，该敌人的岩元素抗性降低20%。",
+   "text_hash": "1bc0ba62b7b7",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/火晶/L4/2B",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "火晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "legacy-pre-2026-02/火晶/L3/2",
+   "title": "火晶·极限瓦解",
+   "text": "岩晶破袭触发后，将额外造成2次岩元素伤害，此效果每4秒至多触发一次。",
+   "text_hash": "7a05dba85596",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "水晶·原态",
+   "text": "获得结晶反应产生的晶片后，将产生持续9秒的水晶庇佑效果：使队伍中所有角色获得50%水元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "82dbb892f449",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L2/1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-02/水晶/L1",
+   "title": "水晶·初阶岩袭",
+   "text": "水晶庇佑效果持续期间，将间歇性在角色的位置释放岩晶轰袭，造成岩元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "3cafdf7a96f2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L2/2",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-02/水晶/L1",
+   "title": "水晶·初阶涧石",
+   "text": "水晶庇佑效果持续期间，队伍中水元素角色或岩元素角色受到治疗时，将在敌人的位置降下涧石，造成岩元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "123e92c70528",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L3/1",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-02/水晶/L2/1",
+   "title": "水晶·进阶",
+   "text": "对于水晶祝福，角色获得的水元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "1e71af47939e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L3/2",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-02/水晶/L2/2",
+   "title": "水晶·进阶",
+   "text": "对于水晶祝福，角色获得的水元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "1e71af47939e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L4/1A",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "legacy-pre-2026-02/水晶/L3/1",
+   "title": "水晶·极限攻岩",
+   "text": "岩晶轰袭命中敌人后的8秒内，该敌人的岩元素抗性和水元素抗性降低20%。",
+   "text_hash": "0d84935f00a5",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L4/1B",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "legacy-pre-2026-02/水晶/L3/1",
+   "title": "水晶·极限瓦解",
+   "text": "岩晶轰袭将额外造成2次岩元素伤害。",
+   "text_hash": "7a2ae7e98ce3",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L4/2A",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "legacy-pre-2026-02/水晶/L3/2",
+   "title": "水晶·极限坚汛",
+   "text": "水晶庇佑效果持续期间，队伍中所有角色的攻击力提升40%，生命值上限提升30%，且角色处于护盾庇护下时，攻击力和生命值上限额外提升20%。",
+   "text_hash": "0afb6eadf154",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-02/水晶/L4/2B",
+   "ruleset_id": "legacy-pre-2026-02",
+   "family": "水晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "legacy-pre-2026-02/水晶/L3/2",
+   "title": "水晶·极限碎浪",
+   "text": "涧石造成的伤害提升40%，且降下的间隔缩短0.5秒。",
+   "text_hash": "dc63ba1680a4",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "雷风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·雷，持续6秒：角色触发扩散反应造成的伤害提升80%，且每次获得风之祝祷·雷时为队伍中所有角色恢复1.5点元素能量，此效果每3秒至多触发一次。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "b35521727ff2",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L2/1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-03/雷风/L1",
+   "title": "雷风·初阶迅切",
+   "text": "角色施放元素爆发时，将生成1层迅切印记，至多生成4层。当前场上角色的攻击命中敌人时，将消耗1层迅切印记，释放一枚迅切雷刃，基于风之祝祷·雷的层数，对路径上的敌人造成雷元素伤害，每4秒至多生成一个迅切雷刃。",
+   "text_hash": "367d49e31d10",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L2/2",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-03/雷风/L1",
+   "title": "雷风·初阶霆跃",
+   "text": "风之祝祷·雷持续期间，当前场上角色的跳跃能力提升，且下落攻击命中敌人时将释放霆跃雷击，基于风之祝祷·雷的层数，造成雷元素范围伤害，此效果每2秒至多触发一次。",
+   "text_hash": "960332d3f0b9",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L3/1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-03/雷风/L2/1",
+   "title": "雷风·进阶",
+   "text": "对于雷风祝福，每层风之祝祷·雷使角色触发扩散反应造成的伤害提升提高20%，队伍中所有角色恢复的元素能量提升0.5点。",
+   "text_hash": "ee043728e962",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L3/2",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-03/雷风/L2/2",
+   "title": "雷风·进阶",
+   "text": "对于雷风祝福，每层风之祝祷·雷使角色触发扩散反应造成的伤害提升提高20%，队伍中所有角色恢复的元素能量提升0.5点。",
+   "text_hash": "ee043728e962",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L4/1A",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "legacy-pre-2026-03/雷风/L3/1",
+   "title": "雷风·极限爆发",
+   "text": "每层风之祝祷·雷使队伍中所有角色的元素爆发造成的伤害提升18%。",
+   "text_hash": "73dd97bae853",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L4/1B",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "legacy-pre-2026-03/雷风/L3/1",
+   "title": "雷风·极限迅切",
+   "text": "迅切雷刃造成的伤害提升100%，且伤害范围提升。",
+   "text_hash": "ef00d93a420f",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L4/2A",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "legacy-pre-2026-03/雷风/L3/2",
+   "title": "雷风·极限霆落",
+   "text": "每层风之祝祷·雷使当前场上角色的下落攻击伤害提升18%。",
+   "text_hash": "f1d21b96004e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/雷风/L4/2B",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "雷风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "legacy-pre-2026-03/雷风/L3/2",
+   "title": "雷风·极限轰跃",
+   "text": "当前场上角色跳跃时，将在起跳的位置释放极限轰雷：基于风之祝祷·雷的层数对敌人造成雷元素范围伤害，此效果每2秒至多触发一次。",
+   "text_hash": "865bcdb3873d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冰风·原态",
+   "text": "角色对敌人触发扩散反应时，队伍中所有角色获得1层风之祝祷·冰，持续6秒：角色触发扩散反应造成的伤害提升80%，角色的暴击伤害提升12%。所有风之祝祷效果共享层数，至多叠加3层。",
+   "text_hash": "7e7020226310",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L2/1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 2,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-03/冰风/L1",
+   "title": "冰风·初阶肃蚀",
+   "text": "风之祝祷·冰持续期间，角色的攻击命中敌人时，将对敌人施加持续5秒的肃蚀效果：基于风之祝祷·冰的层数，每秒受到冰元素伤害。",
+   "text_hash": "79db6585c57b",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L2/2",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 2,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-03/冰风/L1",
+   "title": "冰风·初阶冰岚",
+   "text": "风之祝祷·冰持续期间，每8秒为当前场上角色恢复25点体力，且角色冲刺时释放冰岚，牵引附近的敌人，并基于风之祝祷·冰的层数造成风元素伤害，此效果每8秒至多触发一次",
+   "text_hash": "9b2b8a52cb85",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L3/1",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 3,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-03/冰风/L2/1",
+   "title": "冰风·进阶",
+   "text": "对于冰风祝福，每层风之祝祷·冰使角色触发扩散反应造成的伤害提升提高20%，暴击伤害提升提高2%。",
+   "text_hash": "a5d2b6cc3b27",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L3/2",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 3,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-03/冰风/L2/2",
+   "title": "冰风·进阶",
+   "text": "对于冰风祝福，每层风之祝祷·冰使角色触发扩散反应造成的伤害提升提高20%，暴击伤害提升提高2%。",
+   "text_hash": "a5d2b6cc3b27",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L4/1A",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "legacy-pre-2026-03/冰风/L3/1",
+   "title": "冰风·极限肃封",
+   "text": "肃蚀效果作用下，敌人受到冰元素伤害的频率提升至每0.5秒1次。",
+   "text_hash": "ea5681b0739b",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L4/1B",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "legacy-pre-2026-03/冰风/L3/1",
+   "title": "冰风·极限冰蚀",
+   "text": "肃蚀效果作用下，敌人的冰元素抗性和风元素抗性降低：每层风之祝祷·冰降低8%。",
+   "text_hash": "2cecc9dff624",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L4/2A",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "legacy-pre-2026-03/冰风/L3/2",
+   "title": "冰风·极限寒攻",
+   "text": "风之祝祷·冰持续期间，当前场上角色恢复体力以及冲刺时释放冰岚的间隔降低4秒。",
+   "text_hash": "bd3780ab30bb",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-03/冰风/L4/2B",
+   "ruleset_id": "legacy-pre-2026-03",
+   "family": "冰风",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "legacy-pre-2026-03/冰风/L3/2",
+   "title": "冰风·极限旋岚",
+   "text": "被冰岚命中的敌人的冰元素抗性和风元素抗性降低：每层风之祝祷·冰降低8%，持续12秒。",
+   "text_hash": "bfbbe15354d3",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L1",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 1,
+   "path": "",
+   "parent_id": null,
+   "title": "冰晶·原态",
+   "text": "获得冰元素结晶反应产生的晶片后，将产生持续9秒的冰晶庇佑效果：使队伍中所有角色获得50%冰元素伤害加成与岩元素伤害加成。此外，每4秒，将获取附近的结晶反应产生的晶片。",
+   "text_hash": "9c46c3561a58",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L2/1",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 2,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-04/冰晶/L1",
+   "title": "冰晶·初阶岩袭",
+   "text": "冰晶庇佑效果持续期间，将间歇性在角色的位置释放岩晶强袭，造成岩元素范围伤害，此效果每4秒至多触发一次。",
+   "text_hash": "7dd30d516f74",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L2/2",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 2,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-04/冰晶/L1",
+   "title": "冰晶·初阶冰迸",
+   "text": "冰晶庇佑效果持续期间，队伍中冰元素角色或岩元素角色造成暴击时，将在敌人的位置降下碎冰迸石，造成岩元素伤害，此效果每2秒至多触发一次。",
+   "text_hash": "3b197ee9e03e",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L3/1",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 3,
+   "path": "1",
+   "parent_id": "legacy-pre-2026-04/冰晶/L2/1",
+   "title": "冰晶·进阶",
+   "text": "对于冰晶祝福，角色获得的冰元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "d85a1d7789d1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L3/2",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 3,
+   "path": "2",
+   "parent_id": "legacy-pre-2026-04/冰晶/L2/2",
+   "title": "冰晶·进阶",
+   "text": "对于冰晶祝福，角色获得的冰元素伤害加成与岩元素伤害加成提升提高10%。",
+   "text_hash": "d85a1d7789d1",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L4/1A",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 4,
+   "path": "1A",
+   "parent_id": "legacy-pre-2026-04/冰晶/L3/1",
+   "title": "冰晶·极限攻岩",
+   "text": "岩晶强袭命中敌人后的8秒内，该敌人的岩元素抗性和冰元素抗性降低20%。",
+   "text_hash": "c0135068f9bf",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L4/1B",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 4,
+   "path": "1B",
+   "parent_id": "legacy-pre-2026-04/冰晶/L3/1",
+   "title": "冰晶·极限瓦解",
+   "text": "岩晶强袭将造成3次岩元素伤害。",
+   "text_hash": "e3e5bd707c53",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L4/2A",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 4,
+   "path": "2A",
+   "parent_id": "legacy-pre-2026-04/冰晶/L3/2",
+   "title": "冰晶·极限锐度",
+   "text": "冰晶庇佑效果持续期间，队伍中所有角色的暴击伤害提升40%，且角色处于护盾庇护下时，暴击伤害额外提升20%。",
+   "text_hash": "58274e41da04",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "legacy-pre-2026-04/冰晶/L4/2B",
+   "ruleset_id": "legacy-pre-2026-04",
+   "family": "冰晶",
+   "level": 4,
+   "path": "2B",
+   "parent_id": "legacy-pre-2026-04/冰晶/L3/2",
+   "title": "冰晶·极限霜岩",
+   "text": "碎冰迸石造成的伤害提升40%，且降下的间隔缩短0.5秒。",
+   "text_hash": "4ad8ead0a39d",
+   "in_period": false,
+   "verification": {
+    "status": "candidate"
+   }
+  }
+ ],
+ "boons": [
+  {
+   "id": "current/boon/伙伴·邂逅多多",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·邂逅多多",
+   "text": "后续抽取事件时，待选事件中必定包含伙伴·随机",
+   "text_hash": "55bc5cc2c852",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·灵巧阵容",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·灵巧阵容",
+   "text": "完成战斗事件，选择待命角色转变为可出战角色时，可以重置1次待选阵容",
+   "text_hash": "65770d7067e3",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·演员多多",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·演员多多",
+   "text": "完成战斗事件，选择待命角色转变为可出战角色时，待选阵容中的角色增加1名",
+   "text_hash": "4397c16170c6",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·即兴重演",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·即兴重演",
+   "text": "随机1名耐力值为0的角色转变为待命角色，但队伍中所有角色将以50%生命值开启本幕的战斗事件",
+   "text_hash": "7dee6978d05c",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·盛情再演",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·盛情再演",
+   "text": "为随机1名角色恢复1点耐力值，但本幕的战斗事件中，当前场上的角色造成暴击后将损失生命值，损失量相当于生命值上限的5%，此效果每1秒最多触发1次",
+   "text_hash": "7807b172c25b",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·华丽阵容",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·华丽阵容",
+   "text": "消耗当前持有的所有「幻剧之花」，使随机1名待命角色转变为可出战角色（0幻剧之花可以直接白嫖）",
+   "text_hash": "eeb0d657e2b6",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·灵活阵容",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·灵活阵容",
+   "text": "随机1名待命角色转变为可出战角色，但完成本幕的战斗事件时，不再有待命角色转变为可出战角色",
+   "text_hash": "b8621c94f4b3",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·特别重演",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·特别重演",
+   "text": "随机1名耐力值为0的角色转变为待命角色，但完成本幕的战斗事件获得的「幻剧之花」减少20",
+   "text_hash": "0c88d08c3339",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·加时演出",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·加时演出",
+   "text": "随机1名可出战角色恢复1点耐力值，但完成本幕的战斗事件获得的「幻剧之花」减少30",
+   "text_hash": "4df302eaca53",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·即兴续演",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·即兴续演",
+   "text": "为随机1或2名角色恢复1点耐力值",
+   "text_hash": "76d6d4d0355b",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·精神振奋",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·精神振奋",
+   "text": "随机2名耐力值为0的角色转变为待命角色",
+   "text_hash": "f5cce3424c29",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·色调搭配",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·色调搭配",
+   "text": "随机选取一种符合参演条件的元素类型，从中随机选取4名耐力值为0的角色转变为待命角色",
+   "text_hash": "3e20248d6187",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·多重登台",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·多重登台",
+   "text": "选择伙伴事件时，待选阵容中的角色增加1名",
+   "text_hash": "45783e0733a9",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·即兴特邀",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·即兴特邀",
+   "text": "随机1名特邀角色转变为可出战角色，但完成本幕的战斗事件时，不再有待命角色转变为可出战角色",
+   "text_hash": "e00272eaf075",
+   "flags": [],
+   "verification": {
+    "status": "verified",
+    "verified_text_hash": "e00272eaf075",
+    "verified_on": "2026-10-01",
+    "evidence": [
+     "18-performance-details-mystery-boons.png (G3)"
+    ],
+    "verified_fields": [
+     "title",
+     "text-full"
+    ],
+    "note": "持有列表卡片，标题与文字逐字一致"
+   }
+  },
+  {
+   "id": "current/boon/伙伴·决战角色",
+   "ruleset_id": "current",
+   "category": "伙伴",
+   "title": "伙伴·决战角色",
+   "text": "随机选中1名可出战角色，若队伍中编入以上角色，成功通过本幕战斗事件，则获得20「幻剧之花」",
+   "text_hash": "4ec941ca80b7",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·重投骰子",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·重投骰子",
+   "text": "获得2次待选事件重置次数",
+   "text_hash": "bbbfabb6c53d",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·神秘多多",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·神秘多多",
+   "text": "选择神秘收获事件时，待选效果增加1项",
+   "text_hash": "8446fdd72004",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·敏锐选择",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·敏锐选择",
+   "text": "选择神秘收获事件时，可以重置1次待选效果",
+   "text_hash": "61161d7fa788",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·预备节目",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·预备节目",
+   "text": "待选事件增加1项",
+   "text_hash": "ecc0ed5531c4",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·获利多多",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·获利多多",
+   "text": "完成战斗事件获得的「幻剧之花」增加15",
+   "text_hash": "cd024ef1c215",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·幕间嘉奖",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·幕间嘉奖",
+   "text": "随机等概率获得以下奖励：获得20「幻剧之花」/获得60「幻剧之花」/获得90「幻剧之花」",
+   "text_hash": "69684a803854",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·双重嘉奖",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·双重嘉奖",
+   "text": "完成本幕战斗事件额外挑战获得的「幻剧之花」数量翻倍",
+   "text_hash": "343665a213b8",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·珍贵收获",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·珍贵收获",
+   "text": "待选事件中刷新一个消耗为15的神秘收获·珍贵事件",
+   "text_hash": "cf3bbd2bc365",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·宜价礼宴",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·宜价礼宴",
+   "text": "选择后，伙伴事件消耗的「幻剧之花」减少10",
+   "text_hash": "658369759b22",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·高效祝福",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·高效祝福",
+   "text": "选择后，辉彩祝福事件消耗的「幻剧之花」减少10",
+   "text_hash": "0f91e82134fe",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·近价交换",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·近价交换",
+   "text": "选择后，伙伴事件消耗的「幻剧之花」减少10，辉彩祝福事件消耗的「幻剧之花」增加10",
+   "text_hash": "9976f60c42d9",
+   "flags": [],
+   "verification": {
+    "status": "verified",
+    "verified_text_hash": "9976f60c42d9",
+    "verified_on": "2026-10-01",
+    "evidence": [
+     "18-performance-details-mystery-boons.png (G3)"
+    ],
+    "verified_fields": [
+     "title",
+     "text-full"
+    ],
+    "note": "持有列表卡片，标题与文字逐字一致"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·近量替代",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·近量替代",
+   "text": "选择后，辉彩祝福事件消耗的「幻剧之花」减少10，伙伴事件消耗的「幻剧之花」增加10",
+   "text_hash": "c49cded59e9d",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·兴致爆发",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·兴致爆发",
+   "text": "随机1名耐力值不满的角色耐力值恢复至上限",
+   "text_hash": "793a5ee0126c",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/惊喜·盛邀优惠",
+   "ruleset_id": "current",
+   "category": "惊喜",
+   "title": "惊喜·盛邀优惠",
+   "text": "伙伴·盛邀事件消耗的「幻剧之花」减少20",
+   "text_hash": "13ef2eac4641",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·奇妙多多",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·奇妙多多",
+   "text": "选择奇妙助益事件时，待选效果增加1项",
+   "text_hash": "8a228c3914b1",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·巧妙选择",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·巧妙选择",
+   "text": "选择奇妙助益事件时，可以重置1次待选效果",
+   "text_hash": "78add201cccc",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·热情声援",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·热情声援",
+   "text": "后续2次选择伙伴事件或者奇妙助益时，必定触发声援强化效果",
+   "text_hash": "0defca94121d",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·底牌道具",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·底牌道具",
+   "text": "消耗当前持有的所有「幻剧之花」，随机获得1个奇妙助益",
+   "text_hash": "55f117680723",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·连拍对策",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·连拍对策",
+   "text": "随机获得1个奇妙助益，但完成本幕的战斗事件时，不再有待命角色转变为可出战角色",
+   "text_hash": "51fb119986cf",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·礼物魔盒",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·礼物魔盒",
+   "text": "随机获得1个奇妙助益",
+   "text_hash": "ab82ee1a32aa",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/助益·强劲祝福",
+   "ruleset_id": "current",
+   "category": "助益",
+   "title": "助益·强劲祝福",
+   "text": "辉彩祝福等级提升1",
+   "text_hash": "b1c6ba24727f",
+   "flags": [
+    "mentions-legacy-system"
+   ],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/礼物·碰碰运气",
+   "ruleset_id": "current",
+   "category": "礼物",
+   "title": "礼物·碰碰运气",
+   "text": "有67%概率获得90「幻剧之花」",
+   "text_hash": "4b0b20b0c21d",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  },
+  {
+   "id": "current/boon/礼物·储备花卉",
+   "ruleset_id": "current",
+   "category": "礼物",
+   "title": "礼物·储备花卉",
+   "text": "当可用「幻剧之花」数量为0时，获得80「幻剧之花」，该效果仅生效一次",
+   "text_hash": "60d4e9fbdada",
+   "flags": [],
+   "verification": {
+    "status": "candidate"
+   }
+  }
+ ]
+}
+<!--RULEPACK-END-->
+</script>
+
+<script>
+// ===================== 纯逻辑模块：不碰 DOM，可整体搬走 =====================
+const RuleMatch = (() => {
+  'use strict';
+  // 原型阈值：只在本批样例上调过，没有留出集。
+  // conflict：整体覆盖率低于它判“文字不符”；distinctMatch/distinctMargin：多候选时，区分性文字的最低覆盖率与领先差距。
+  const TH = { conflict: 0.35, distinctMatch: 0.3, distinctMargin: 0.25 };
+
+  const normTitle = s => (s || '').replace(/\s+/g, '').replace(/[・•．.]/g, '·');
+  const normText = s => (s || '')
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/体系增强|额外效果|简要说明/g, '')   // 页面标签词，不是规则文字
+    .replace(/[0-9０-９]+(?:\.[0-9]+)?/g, '')
+    .replace(/[%％]/g, '')
+    .replace(/[\s,，。、：:；;（）()「」『』“”"'!！?？\-–—·/]/g, '');
+  function grams(s) { const g = new Set(); for (let i = 0; i + 1 < s.length; i++) g.add(s.slice(i, i + 2)); return g; }
+  function coverageOf(obsGrams, candGrams) { if (!obsGrams.size) return null; let hit = 0; for (const g of obsGrams) if (candGrams.has(g)) hit++; return hit / obsGrams.size; }
+  function coverage(obsText, candText) { return coverageOf(grams(normText(obsText)), grams(normText(candText))); }
+  function dice(a, b) { const A = new Set(a), B = new Set(b); let h = 0; for (const c of A) if (B.has(c)) h++; return (A.size + B.size) ? (2 * h) / (A.size + B.size) : 0; }
+  const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+
+  function prepare(pack) {
+    const byId = new Map();
+    for (const n of pack.blessings || []) byId.set(n.id, n);
+    for (const b of pack.boons || []) byId.set(b.id, b);
+    return Object.assign({}, pack, { _byId: byId });
+  }
+  function ancestors(pack, node) { const out = []; let p = node.parent_id; while (p) { const a = pack._byId.get(p); if (!a) break; out.unshift(a); p = a.parent_id; } return out; }
+  function pathText(pack, node) { return ancestors(pack, node).concat(node).map(n => n.text).join(''); }
+  function identity(node) {
+    return node.level != null
+      ? `${node.ruleset_id} / ${node.family} / L${node.level}${node.path ? ' / ' + node.path : ''}`
+      : `${node.ruleset_id} / boon / ${node.title}`;
+  }
+  function verificationState(node) {
+    const v = node.verification || {};
+    if (v.status !== 'verified') return { label: '候选（未核验）', ok: false };
+    if (v.verified_text_hash && v.verified_text_hash !== node.text_hash) return { label: '核验失效（文字已变，须重新核验）', ok: false };
+    return { label: '已核验：' + (v.verified_fields || []).join('、'), ok: true, evidence: v.evidence };
+  }
+  function nearestTitles(cands, title, k) {
+    return cands.map(n => ({ node: n, score: dice(normTitle(n.title), title) }))
+      .filter(x => x.score > 0.3).sort((a, b) => b.score - a.score).slice(0, k);
+  }
+  const asCands = nodes => nodes.map(n => ({ node: n, coverage: null, distinct: null }));
+
+  // 画面观察 obs = { family?, level?, title?, summary? } → 匹配结果
+  function matchBlessing(pack, rulesetId, obs) {
+    const reasons = [];
+    const title = obs.title ? normTitle(obs.title) : '';
+    let cands = pack.blessings.filter(n => n.ruleset_id === rulesetId);
+    if (title) {
+      const hit = cands.filter(n => normTitle(n.title) === title);
+      if (!hit.length) {
+        const elsewhere = pack.blessings.filter(n => n.ruleset_id !== rulesetId && normTitle(n.title) === title);
+        if (elsewhere.length) {
+          const rs = [...new Set(elsewhere.map(e => e.ruleset_id))];
+          return { status: 'conflict', kind: '版本漂移', reasons: [`标题「${obs.title}」不在规则集 ${rulesetId}，但存在于 ${rs.join('、')}。判为版本漂移：不套用其他规则集的效果。`], candidates: asCands(elsewhere) };
+        }
+        return { status: 'unknown', kind: '标题未知', reasons: [`标题「${obs.title}」不在规则集 ${rulesetId} 中：可能是新词条、改名或识别错误。`], suggestions: nearestTitles(cands, title, 3), note: '相近标题仅供人工参考，不自动采用。' };
+      }
+      cands = hit;
+      reasons.push(`标题精确命中 ${hit.length} 个节点`);
+    }
+    if (obs.family) {
+      const f = cands.filter(n => n.family === obs.family);
+      if (!f.length) return { status: 'conflict', kind: '反应族不符', reasons: reasons.concat([`候选属于 ${[...new Set(cands.map(c => c.family))].join('/')}，画面反应族是 ${obs.family}。`]), candidates: asCands(cands) };
+      cands = f;
+    }
+    const hasLevel = obs.level !== undefined && obs.level !== null && obs.level !== '';
+    if (hasLevel) {
+      const lv = Number(obs.level);
+      if (lv === 0) return { status: 'unknown', kind: '未解锁', reasons: ['等级 0 表示未解锁，不对应任何效果节点。'] };
+      const l = cands.filter(n => n.level === lv);
+      if (!l.length) return { status: 'conflict', kind: '等级不符', reasons: reasons.concat([`候选节点等级为 ${[...new Set(cands.map(c => c.level))].join('/')}，画面等级是 ${lv}。`]), candidates: asCands(cands) };
+      cands = l;
+      reasons.push(`等级 ${lv} 筛出 ${l.length} 个候选`);
+    }
+    if (!title && !obs.family) return { status: 'unknown', kind: '输入不足', reasons: ['没有标题也没有反应族，无法匹配。'] };
+    if (!title && !hasLevel) return { status: 'ambiguous', kind: '输入不足', reasons: ['只有反应族，没有等级或标题。'], candidates: asCands(cands) };
+
+    const scored = cands.map(n => ({ node: n, text: pathText(pack, n), coverage: null, distinct: null }));
+    if (obs.summary) {
+      const og = grams(normText(obs.summary));
+      const cg = scored.map(s => grams(normText(s.text)));
+      scored.forEach((s, i) => { s.coverage = coverageOf(og, cg[i]); });
+      const best = Math.max(...scored.map(s => s.coverage));
+      reasons.push('摘要整体覆盖率：' + scored.map(s => `${s.node.title}${s.node.path ? '[' + s.node.path + ']' : ''} ${pct(s.coverage)}`).join('；'));
+      if (best < TH.conflict) return { status: 'conflict', kind: '文字不符', reasons: reasons.concat([`最高覆盖率 ${pct(best)} 低于 ${pct(TH.conflict)}：画面文字与规则包对不上，可能是版本已更新或识别错误。不按相似度套用。`]), candidates: scored };
+      if (scored.length === 1) return matched(pack, scored[0].node, scored, reasons);
+      // 多候选：只看“不是所有候选共有”的那部分摘要
+      const shared = new Set([...og].filter(g => cg.every(c => c.has(g))));
+      const distinct = new Set([...og].filter(g => !shared.has(g)));
+      if (!distinct.size) return { status: 'ambiguous', kind: '路径不可区分', reasons: reasons.concat(['摘要只含各候选共有的文字，没有能区分父分支的内容。']), candidates: scored };
+      scored.forEach((s, i) => { s.distinct = coverageOf(distinct, cg[i]); });
+      scored.sort((a, b) => b.distinct - a.distinct);
+      reasons.push(`区分性文字（${distinct.size} 个二字片段）覆盖率：` + scored.map(s => `${s.node.path || s.node.title} ${pct(s.distinct)}`).join('；'));
+      const b0 = scored[0], b1 = scored[1];
+      if (b0.distinct >= TH.distinctMatch && b0.distinct - b1.distinct >= TH.distinctMargin) return matched(pack, b0.node, scored, reasons);
+      return { status: 'ambiguous', kind: '路径不可区分', reasons: reasons.concat(['区分性文字不足以定路径（覆盖率或差距不够）。']), candidates: scored };
+    }
+    if (scored.length === 1) return matched(pack, scored[0].node, scored, reasons);
+    return { status: 'ambiguous', kind: '多候选', reasons: reasons.concat([`${scored.length} 个节点共用该${title ? '标题' : '等级'}，需要摘要文字或获得历史才能定路径。`]), candidates: scored };
+  }
+  function matched(pack, node, candidates, reasons) {
+    return { status: 'matched', node, identity: identity(node), inherited: ancestors(pack, node), verification: verificationState(node), candidates, reasons };
+  }
+
+  function matchBoon(pack, rulesetId, obs) {
+    const title = normTitle(obs.title);
+    const cands = pack.boons.filter(b => b.ruleset_id === rulesetId);
+    const hit = cands.find(b => normTitle(b.title) === title);
+    if (!hit) return { status: 'unknown', kind: '标题未知', reasons: [`标题「${obs.title}」不在规则集 ${rulesetId} 的神秘收获中。`], suggestions: nearestTitles(cands, title, 3), note: '相近标题仅供人工参考，不自动采用。' };
+    const cov = obs.text ? coverage(obs.text, hit.text) : null;
+    const reasons = ['标题精确命中'];
+    if (cov != null) {
+      reasons.push(`卡片文字覆盖率 ${pct(cov)}`);
+      if (cov < TH.conflict) return { status: 'conflict', kind: '文字不符', node: hit, reasons: reasons.concat(['画面文字与规则包不一致，可能已更新或识别错误。']) };
+    }
+    return { status: 'matched', node: hit, identity: identity(hit), verification: verificationState(hit), lifecycle: lifecycleOf(hit), flags: hit.flags || [], reasons };
+  }
+
+  // 生命周期标注：从条文人工推断，不是来源数据；未标注一律 unknown。
+  const BOON_LIFECYCLE = {
+    '伙伴·即兴特邀': { kind: 'act', params: ['随机选中的特邀角色'], note: '立即把 1 名特邀角色转为可出战；“本幕战斗后不再有待命转可出战”随本幕结束' },
+    '伙伴·决战角色': { kind: 'act', params: ['随机选中的可出战角色'], note: '目标角色是实例参数，标题不含；本幕战斗通过后结算' },
+    '伙伴·灵活阵容': { kind: 'act', params: ['随机转为可出战的待命角色'] },
+    '惊喜·近价交换': { kind: 'persistent', note: '持续改变后续价格；最终价格仍以当前候选页为准' },
+    '惊喜·高效祝福': { kind: 'persistent' },
+    '惊喜·重投骰子': { kind: 'instant', note: '立即获得 2 次重置次数；次数在事件页读，不在持有列表' },
+    '惊喜·幕间嘉奖': { kind: 'instant', params: ['随机到的花朵数'] },
+    '礼物·储备花卉': { kind: 'conditional-once', condition: '可用幻剧之花为 0', note: '触发一次后消费；持有列表是否仍显示——未观察' },
+    '助益·热情声援': { kind: 'counted', count: 2, note: '“后续 2 次”；剩余次数无可见标记——未观察' },
+    '惊喜·敏锐选择': { kind: 'counted', count: 1 },
+  };
+  function lifecycleOf(boon) { return BOON_LIFECYCLE[boon.title] || { kind: 'unknown', note: '生命周期未标注' }; }
+  const KIND_LABEL = { act: '本幕内', persistent: '持续', instant: '一次性立即结算', 'conditional-once': '条件触发一次', counted: '限次', unknown: '未标注' };
+
+  // 神秘收获实例 = 规则身份 + 实例参数 + 获得幕次 + 状态
+  function newInstance(pack, rulesetId, title, act, seq) {
+    const m = matchBoon(pack, rulesetId, { title });
+    if (m.status !== 'matched') return { error: m };
+    const lc = m.lifecycle;
+    const inst = {
+      id: 'i' + seq, ruleId: m.node.id, title: m.node.title, kind: lc.kind, acquiredAct: act,
+      params: Object.fromEntries((lc.params || []).map(p => [p, '未知（画面未显示）'])),
+      remaining: lc.kind === 'counted' ? lc.count : null, condition: lc.condition || null,
+      state: lc.kind === 'instant' ? 'settled' : 'active', history: [`第${act}幕获得`],
+    };
+    return { instance: inst, match: m };
+  }
+  const STATE_LABEL = { active: '生效中', settled: '已结算', expired: '本幕已结束', consumed: '已消费' };
+
+  function boonReducer(state, action) {
+    const s = JSON.parse(JSON.stringify(state));
+    switch (action.type) {
+      case 'ACQUIRE': s.instances.push(action.instance); return s;
+      case 'ACT_BATTLE_DONE':
+        for (const i of s.instances) if (i.kind === 'act' && i.state === 'active') { i.state = 'expired'; i.history.push(`第${s.act}幕战斗结束，本幕效果结束`); }
+        s.act += 1; return s;
+      case 'TRIGGER': {
+        const i = s.instances.find(x => x.id === action.id); if (!i) return s;
+        if (i.kind === 'counted' && i.state === 'active') { i.remaining -= 1; i.history.push(`触发一次，剩余 ${i.remaining}`); if (i.remaining <= 0) i.state = 'consumed'; }
+        else if (i.kind === 'conditional-once' && i.state === 'active') { i.state = 'consumed'; i.history.push('条件满足，触发并消费'); }
+        else if (i.kind === 'persistent') i.history.push('持续效果，不按次数消耗');
+        else i.history.push(`当前状态“${STATE_LABEL[i.state]}”，触发无效`);
+        return s; }
+      case 'FLOWERS_ZERO':
+        for (const i of s.instances) if (i.kind === 'conditional-once' && i.condition && i.condition.includes('为 0') && i.state === 'active') { i.state = 'consumed'; i.history.push('花朵为 0：触发并消费'); }
+        return s;
+      case 'OBSERVE_HOLDING': {
+        const shown = action.titles.map(normTitle).filter(Boolean);
+        const active = s.instances.filter(i => i.state === 'active');
+        const notTracked = shown.filter(t => !s.instances.some(i => normTitle(i.title) === t));
+        const endedButShown = s.instances.filter(i => i.state !== 'active' && shown.includes(normTitle(i.title))).map(i => `${i.title}（${STATE_LABEL[i.state]}）`);
+        const activeNotShown = active.filter(i => !shown.includes(normTitle(i.title))).map(i => i.title);
+        const countMismatch = action.count != null && action.count !== shown.length;
+        let verdict;
+        if (countMismatch) verdict = `“当前持有 ${action.count}”与列出的 ${shown.length} 项不一致：列表可能需要滚动，或读数有误。`;
+        else if (notTracked.length) verdict = '列表里有本工具没跟踪到的词条：漏掉了获得事件，或词条不在规则包。';
+        else if (activeNotShown.length) verdict = '有生效中的实例没出现在列表：可能已被游戏移除——这是未观察到的规则。';
+        else if (endedButShown.length) verdict = '已结束/已消费的实例仍出现在列表：游戏是否移除已结束项——未观察。不能用“持有数”推断状态。';
+        else verdict = '列表与跟踪一致；但“当前持有 N”只说明列表有 N 项，不说明层数、剩余次数或是否已触发。';
+        s.holdingCheck = { shown: action.titles, count: action.count, trackedActive: active.length, notTracked, endedButShown, activeNotShown, verdict };
+        return s; }
+      default: return s;
+    }
+  }
+
+  function diffPacks(a, b) {
+    const key = e => `${e.title}|${e.text_hash}`;
+    const o = new Map(a.blessings.concat(a.boons).map(e => [e.id, e])), n = new Map(b.blessings.concat(b.boons).map(e => [e.id, e]));
+    const added = [...n.keys()].filter(k => !o.has(k));
+    const removed = [...o.keys()].filter(k => !n.has(k));
+    const changed = [...o.keys()].filter(k => n.has(k) && key(o.get(k)) !== key(n.get(k)))
+      .map(k => ({ id: k, what: o.get(k).title !== n.get(k).title ? `改名：${o.get(k).title} → ${n.get(k).title}` : '文字变化', wasVerified: (o.get(k).verification || {}).status === 'verified' }));
+    return { added, removed, changed, invalidated: changed.filter(c => c.wasVerified).map(c => c.id) };
+  }
+  function makeSyntheticNextPack(pack) {
+    const p = JSON.parse(JSON.stringify(pack)); delete p._byId;
+    p.pack_id = pack.pack_id + '+synthetic-next';
+    p.synthetic = '合成用例：模拟下一期/下一版本的三类变化（改文字、改名、增删词条）。不是游戏事实。';
+    p.scope = Object.assign({}, p.scope, { claimed: Object.assign({}, p.scope.claimed, { period: '2026-10（合成）' }) });
+    const edits = [];
+    for (const n of p.blessings) {
+      if (n.id === 'current/绽放/L1') { n.text = n.text.replace('有50%概率额外产生一枚草原核', '必定额外产生一枚草原核').replace('提升150%', '提升200%'); n.text_hash = 'syn-' + hash(n.text); edits.push('绽放·原态：文字改动（概率→必定，150%→200%），原核验应失效'); }
+      if (n.id === 'current/感电/L2/1') { n.title = '感电·初阶浮核'; edits.push('感电·初阶浮雷 → 改名为 感电·初阶浮核'); }
+    }
+    const before = p.boons.length;
+    p.boons = p.boons.filter(b => b.title !== '助益·强劲祝福');
+    if (p.boons.length < before) edits.push('删除 助益·强劲祝福');
+    p.boons.push({ id: 'current/boon/惊喜·合成新词条', ruleset_id: 'current', category: '惊喜', title: '惊喜·合成新词条', text: '（合成）后续1次伙伴事件免费。', text_hash: 'syn-new', flags: ['synthetic'], verification: { status: 'candidate' } });
+    edits.push('新增 惊喜·合成新词条');
+    p.synthetic_edits = edits;
+    return p;
+  }
+  function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h.toString(16); }
+
+  return { TH, prepare, matchBlessing, matchBoon, newInstance, boonReducer, diffPacks, makeSyntheticNextPack, identity, verificationState, ancestors, lifecycleOf, KIND_LABEL, STATE_LABEL, pct, normTitle, normText, coverage };
+})();
+if (typeof module !== 'undefined') module.exports = RuleMatch;
+</script>
+
+<script>
+// ===================== 页面外壳：可抛弃 =====================
+const ui = (() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let basePack = null, pack = null, state = null, scenarioIdx = 0, stepDone = 0;
+
+  function loadEmbedded() {
+    const raw = $('rulepack').textContent.replace(/<!--RULEPACK-(START|END)-->/g, '').trim();
+    try { const p = JSON.parse(raw || '{}'); return p.blessings ? p : null; } catch (e) { return null; }
+  }
+  function initialState() { return { rulesetId: 'current', packLabel: '原始包', lastMatch: null, held: {}, boons: { act: 1, instances: [], holdingCheck: null }, seq: 0, diff: null, log: [] }; }
+  function log(msg) { state.log.unshift(msg); state.log = state.log.slice(0, 12); }
+  function obsFromForm() { return { source: $('f-source').value, family: $('f-family').value, level: $('f-level').value, title: $('f-title').value.trim(), summary: $('f-summary').value.trim() }; }
+  function fill(v) {
+    if (v.source != null) $('f-source').value = v.source; if (v.family != null) $('f-family').value = v.family; if (v.level != null) $('f-level').value = v.level;
+    if (v.title != null) $('f-title').value = v.title; if (v.summary != null) $('f-summary').value = v.summary;
+    if (v.boonTitle != null) $('f-boon-title').value = v.boonTitle; if (v.boonText != null) $('f-boon-text').value = v.boonText;
+    if (v.holding != null) $('f-holding').value = v.holding; if (v.holdingCount != null) $('f-holding-count').value = v.holdingCount;
+    if (v.ruleset != null) $('f-ruleset').value = v.ruleset;
+  }
+
+  // ---- 动作 ----
+  const act = {
+    matchBlessing(obs) {
+      obs = obs || obsFromForm();
+      const r = RuleMatch.matchBlessing(pack, state.rulesetId, obs);
+      state.lastMatch = { type: 'blessing', obs, r };
+      if (r.status === 'matched') state.held[r.node.family] = { observedLevel: obs.level === '' ? '—' : obs.level, identity: r.identity, node: r.node, inherited: r.inherited, verification: r.verification };
+      log(`匹配祝福 [${obs.source || '—'}] 标题「${obs.title || '—'}」反应族「${obs.family || '—'}」等级「${obs.level === '' ? '—' : obs.level}」→ ${r.status}${r.kind ? '（' + r.kind + '）' : ''}`);
+    },
+    matchBoon(o) {
+      o = o || { title: $('f-boon-title').value.trim(), text: $('f-boon-text').value.trim() };
+      const r = RuleMatch.matchBoon(pack, state.rulesetId, o);
+      state.lastMatch = { type: 'boon', obs: o, r };
+      log(`匹配神秘收获「${o.title}」→ ${r.status}${r.kind ? '（' + r.kind + '）' : ''}`);
+    },
+    acquire(title) {
+      title = title || $('f-boon-title').value.trim();
+      const res = RuleMatch.newInstance(pack, state.rulesetId, title, state.boons.act, ++state.seq);
+      if (res.error) { state.lastMatch = { type: 'boon', obs: { title }, r: res.error }; log(`获得「${title}」失败：${res.error.status}`); return; }
+      state.boons = RuleMatch.boonReducer(state.boons, { type: 'ACQUIRE', instance: res.instance });
+      state.lastMatch = { type: 'boon', obs: { title }, r: res.match };
+      log(`第${state.boons.act}幕获得「${res.instance.title}」→ 实例 ${res.instance.id}（${RuleMatch.KIND_LABEL[res.instance.kind]}）`);
+    },
+    trigger(id) { id = id || $('f-instance').value; if (!id) return; state.boons = RuleMatch.boonReducer(state.boons, { type: 'TRIGGER', id }); log(`触发实例 ${id}`); },
+    actDone() { state.boons = RuleMatch.boonReducer(state.boons, { type: 'ACT_BATTLE_DONE' }); log(`本幕战斗结束 → 进入第${state.boons.act}幕`); },
+    flowersZero() { state.boons = RuleMatch.boonReducer(state.boons, { type: 'FLOWERS_ZERO' }); log('可用幻剧之花变为 0'); },
+    observe(titles, count) {
+      titles = titles || $('f-holding').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+      count = count != null ? count : Number($('f-holding-count').value || 0);
+      state.boons = RuleMatch.boonReducer(state.boons, { type: 'OBSERVE_HOLDING', titles, count });
+      log(`核对持有列表：${titles.join('、')}（当前持有 ${count}）`);
+    },
+    setRuleset(id) { id = id || $('f-ruleset').value; state.rulesetId = id; log(`切换规则集 → ${id}`); },
+    loadPack(which) {
+      if (which === 'synthetic') { pack = RuleMatch.prepare(RuleMatch.makeSyntheticNextPack(basePack)); state.packLabel = '合成的下一期包'; }
+      else { pack = RuleMatch.prepare(basePack); state.packLabel = '原始包'; }
+      state.diff = null; log(`加载${state.packLabel}：${pack.pack_id}`);
+    },
+    showDiff() { state.diff = RuleMatch.diffPacks(basePack, pack); log(`比对 原始包 → ${state.packLabel}`); },
+    reset() { state = initialState(); pack = RuleMatch.prepare(basePack); log('重置'); },
+  };
+
+  // ---- 渲染 ----
+  function tag(cls, text) { return `<span class="tag ${cls}">${esc(text)}</span>`; }
+  function nodeLine(n) { return `${esc(n.title)} <span class="small">(${esc(RuleMatch.identity(n))})</span>`; }
+  function renderMeta() {
+    const s = pack.source || {};
+    $('packMeta').innerHTML = `规则包 <b>${esc(pack.pack_id)}</b> · 来源 ${esc(s.name || '')}${s.revision_id ? ' rev ' + s.revision_id : ''}（快照 ${esc(s.snapshot_date || '')}，SHA-256 ${esc((s.sha256 || '').slice(0, 12))}…）· 导入 ${esc(pack.imported_at || '')} · 声明范围：${esc(Object.values((pack.scope || {}).claimed || {}).join(' / '))} · 祝福树节点 ${pack.blessings.length}，神秘收获 ${pack.boons.length}。${pack.synthetic ? tag('warn', '合成包') : ''}`;
+  }
+  function renderPackState() {
+    const rs = pack.rulesets.map(r => `<tr><td>${r.id === state.rulesetId ? '<b>' + esc(r.id) + '</b>' : esc(r.id)}</td><td>${esc(r.label)}</td><td>${tag(r.status === 'retired' ? 'grey' : 'warn', r.status)}</td><td class="small">${esc(r.note || '')}</td></tr>`).join('');
+    let html = `<p>当前：<b>${esc(state.packLabel)}</b>（${esc(pack.pack_id)}）· 规则集 <b>${esc(state.rulesetId)}</b></p><table><tr><th>规则集</th><th>说明</th><th>状态</th><th></th></tr>${rs}</table>`;
+    if (pack.synthetic) html += `<p class="small">${esc(pack.synthetic)}</p><ul>${(pack.synthetic_edits || []).map(e => `<li class="small">${esc(e)}</li>`).join('')}</ul>`;
+    if (state.diff) {
+      const d = state.diff;
+      html += `<div class="card"><b>两包差异</b>（原始包 → ${esc(state.packLabel)}）<ul>
+        <li>新增 ${d.added.length}：${esc(d.added.join('、') || '无')}</li>
+        <li>删除 ${d.removed.length}：${esc(d.removed.join('、') || '无')}</li>
+        <li>变化 ${d.changed.length}：${d.changed.map(c => esc(c.id) + '（' + esc(c.what) + '）').join('、') || '无'}</li>
+        <li>${d.invalidated.length ? tag('bad', '核验失效 ' + d.invalidated.length) : tag('ok', '无核验失效')} ${esc(d.invalidated.join('、'))}</li></ul>
+        <p class="small">每一项都要回到“候选”，重新对照当期客户端后才能发布；差异为零也不代表当期全集已覆盖。</p></div>`;
+    }
+    $('packState').innerHTML = html;
+  }
+  function renderLastMatch() {
+    const m = state.lastMatch; if (!m) return;
+    const r = m.r, o = m.obs;
+    const S = { matched: '已匹配', ambiguous: '多候选', unknown: '未知', conflict: '矛盾' };
+    let html = `<div class="card ${r.status}"><div><span class="status ${r.status}">${S[r.status]}</span>${r.kind ? ' · ' + esc(r.kind) : ''} <span class="small">输入：${esc([o.source, o.family, o.level !== undefined && o.level !== '' ? '等级 ' + o.level : '', o.title, o.text ? '卡片文字' : '', o.summary ? '摘要' : ''].filter(Boolean).join(' · '))}</span></div>`;
+    if (r.status === 'matched') {
+      html += `<p><b>身份：</b><span class="mono">${esc(r.identity)}</span> ${r.verification.ok ? tag('ok', r.verification.label) : tag('warn', r.verification.label)}</p>`;
+      if (r.inherited && r.inherited.length) html += `<p class="small">继承的上级效果：${r.inherited.map(n => esc(n.title) + (n.path ? '[' + n.path + ']' : '')).join(' → ')} → <b>${esc(r.node.title)}</b>${r.node.path ? '[' + r.node.path + ']' : ''}</p>`;
+      if (r.lifecycle) html += `<p class="small">生命周期（人工标注）：${esc(RuleMatch.KIND_LABEL[r.lifecycle.kind])}${r.lifecycle.params ? '；实例参数：' + esc(r.lifecycle.params.join('、')) : ''}${r.lifecycle.note ? '；' + esc(r.lifecycle.note) : ''}</p>`;
+      if (r.flags && r.flags.length) html += `<p>${r.flags.map(f => tag('warn', f === 'mentions-legacy-system' ? '疑似旧系统词条，需当期核验' : f)).join('')}</p>`;
+      html += `<details><summary>规则文字</summary><p class="small">${esc(r.node.text)}</p></details>`;
+    }
+    if (r.candidates && r.candidates.length && r.status !== 'matched') html += `<p class="small">候选：</p><ul>${r.candidates.map(c => `<li class="small">${nodeLine(c.node)}${c.coverage != null ? ' 整体 ' + RuleMatch.pct(c.coverage) : ''}${c.distinct != null ? ' 区分性 ' + RuleMatch.pct(c.distinct) : ''}</li>`).join('')}</ul>`;
+    if (r.suggestions) html += `<p class="small">相近标题（${esc(r.note)}）：${r.suggestions.length ? r.suggestions.map(s => esc(s.node.title) + ' ' + Math.round(s.score * 100) + '%').join('；') : '无'}</p>`;
+    html += `<ul>${(r.reasons || []).map(x => `<li class="small">${esc(x)}</li>`).join('')}</ul></div>`;
+    $('lastMatch').innerHTML = html;
+  }
+  function renderHeld() {
+    const rows = Object.entries(state.held);
+    if (!rows.length) { $('held').innerHTML = '<p class="small">还没有已确认身份的祝福。</p>'; return; }
+    $('held').innerHTML = `<table><tr><th>反应族</th><th>画面等级</th><th>规则身份</th><th>路径上的节点</th><th>核验</th></tr>${rows.map(([f, h]) => `<tr><td>${esc(f)}</td><td>${esc(h.observedLevel)}</td><td class="mono">${esc(h.identity)}</td><td class="small">${h.inherited.concat(h.node).map(n => esc(n.title) + (n.path ? '[' + n.path + ']' : '')).join(' → ')}</td><td>${h.verification.ok ? tag('ok', '已核验') : tag('warn', h.verification.label)}</td></tr>`).join('')}</table><p class="small">“画面等级”是观察值；“规则身份”才是规划要用的键。只存“激化 2 级”会丢掉路径。</p>`;
+  }
+  function renderInstances() {
+    $('actNo').textContent = state.boons.act;
+    const list = state.boons.instances;
+    const sel = $('f-instance'); sel.innerHTML = list.map(i => `<option value="${i.id}">${esc(i.id + ' ' + i.title)}</option>`).join('');
+    if (!list.length) { $('instances').innerHTML = '<p class="small">还没有实例。</p>'; return; }
+    $('instances').innerHTML = `<table><tr><th>实例</th><th>规则</th><th>类型</th><th>获得</th><th>参数</th><th>状态</th><th>历史</th></tr>${list.map(i => `<tr><td>${esc(i.id)}</td><td>${esc(i.title)}</td><td>${esc(RuleMatch.KIND_LABEL[i.kind])}${i.remaining != null ? '（剩 ' + i.remaining + '）' : ''}${i.condition ? '<br><span class="small">条件：' + esc(i.condition) + '</span>' : ''}</td><td>第${i.acquiredAct}幕</td><td class="small">${Object.entries(i.params).map(([k, v]) => esc(k) + '：' + esc(v)).join('<br>') || '—'}</td><td>${tag(i.state === 'active' ? 'ok' : 'grey', RuleMatch.STATE_LABEL[i.state])}</td><td class="small">${i.history.map(esc).join('<br>')}</td></tr>`).join('')}</table>`;
+  }
+  function renderHolding() {
+    const h = state.boons.holdingCheck; if (!h) return;
+    $('holding').innerHTML = `<div class="card ${h.notTracked.length || h.activeNotShown.length ? 'conflict' : h.endedButShown.length ? 'ambiguous' : ''}"><p>列表：${esc(h.shown.join('、') || '（空）')} · 当前持有 ${esc(h.count)} · 跟踪中生效实例 ${h.trackedActive}</p>${h.notTracked.length ? `<p class="small">未跟踪：${esc(h.notTracked.join('、'))}</p>` : ''}${h.activeNotShown.length ? `<p class="small">生效中但未显示：${esc(h.activeNotShown.join('、'))}</p>` : ''}${h.endedButShown.length ? `<p class="small">已结束但仍显示：${esc(h.endedButShown.join('、'))}</p>` : ''}<p><b>${esc(h.verdict)}</b></p></div>`;
+  }
+  function renderFamilies() {
+    const fams = [...new Set(pack.blessings.filter(n => n.ruleset_id === state.rulesetId).map(n => n.family))];
+    const cur = $('f-family').value;
+    $('f-family').innerHTML = '<option value=""></option>' + fams.map(f => `<option${(pack.scope.period_families || []).includes(f) ? '' : ' class="small"'}>${esc(f)}</option>`).join('');
+    if (fams.includes(cur)) $('f-family').value = cur;
+    const rs = $('f-ruleset'); const curRs = rs.value;
+    rs.innerHTML = pack.rulesets.map(r => `<option value="${esc(r.id)}">${esc(r.id)}</option>`).join('');
+    rs.value = pack.rulesets.some(r => r.id === curRs) ? curRs : state.rulesetId;
+  }
+  function renderLog() { $('log').innerHTML = state.log.map(esc).join('<br>'); }
+  function render() { renderMeta(); renderPackState(); renderLastMatch(); renderHeld(); renderInstances(); renderHolding(); renderFamilies(); renderLog(); }
+
+  // ---- 引导场景 ----
+  const G2_BRIEF = '触发原激化、超激化或者蔓激化时将向敌人发射茂雷飞核，造成草元素范围伤害';
+  const G4_SUMMARY = '体系增强: 触发原激化、超激化或者蔓激化时，向敌人发射茂雷飞核，造成草元素范围伤害 额外效果: 受原激化反应影响的敌人的雷元素与草元素抗性降低，且对其造成雷元素或草元素伤害后，将降下丰饶落雷，造成雷元素伤害';
+  const G1_FULL = '触发绽放及月绽放反应时，有50%概率额外产生一枚草原核，且队伍角色触发的绽放、超绽放、烈绽放反应伤害提升150%，队伍角色造成的月绽放反应伤害提升45%';
+  const G3_A = '随机1名特邀角色转变为可出战角色，但完成本幕的战斗事件时，不再有待命角色转变为可出战角色';
+  const G3_B = '选择后，伙伴事件消耗的「幻剧之花」减少10，辉彩祝福事件消耗的「幻剧之花」增加10';
+  const SYN_VAPE_SUMMARY = '体系增强: 对敌人触发蒸发反应后，敌人的火元素抗性与水元素抗性降低 额外效果: 对敌人触发蒸发反应时，将释放浪涌冲击，对命中的敌人造成水元素伤害 额外效果: 角色对敌人触发蒸发反应造成的伤害提升';
+  const EC_TEXT = '角色对敌人触发感电及月感电反应后，将产生持续3秒的电涌效果：队伍中所有角色触发感电反应造成的伤害提升250%，月感电反应造成的伤害提升70%';
+  const B = (label, run, f) => ({ label, run, fill: f });
+  const SCENARIOS = [
+    { title: '1 获得结果页：激化·原态', tagText: '真实截图 G2', desc: '升级结算页显示“激化·原态”和简要说明（已去掉数值与冷却）。看：标题精确命中、简要文字也能通过覆盖率校验、核验状态来自登记。', steps: [
+      B('输入标题「激化·原态」+ 简要说明，匹配', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '激化·原态', summary: G2_BRIEF }), { source: '获得结果页', family: '', level: '', title: '激化·原态', summary: G2_BRIEF }),
+    ] },
+    { title: '2 汇总页：激化 等级2', tagText: '真实截图 G4', desc: '演出详情里只看到“等级2 激化祝福”和两行摘要，没有分支标题。看：只给等级会得到两个候选；摘要里“丰饶落雷”那一行才定出父分支 1；状态表里“画面等级”和“规则身份”分开记。', steps: [
+      B('只给反应族「激化」+ 等级 2', () => act.matchBlessing({ source: '祝福汇总页', family: '激化', level: '2', title: '', summary: '' }), { source: '祝福汇总页', family: '激化', level: '2', title: '', summary: '' }),
+      B('再加上两行摘要文字', () => act.matchBlessing({ source: '祝福汇总页', family: '激化', level: '2', title: '', summary: G4_SUMMARY }), { summary: G4_SUMMARY }),
+      B('对照：标题「激化·进阶」不给等级（3 级有两个同名同文节点）', () => act.matchBlessing({ source: '祝福汇总页', family: '', level: '', title: '激化·进阶', summary: '' }), { family: '', level: '', title: '激化·进阶', summary: '' }),
+    ] },
+    { title: '3 局前预览：绽放树', tagText: '真实截图 G1', desc: '局前“辉彩祝福详情”显示整棵树和完整文字。看：完整文字覆盖率接近 100%；这个节点在登记里已核验（标题 + 完整文字）；树上两侧各有一个“进阶”。', steps: [
+      B('标题「绽放·原态」+ 完整文字，匹配', () => act.matchBlessing({ source: '局前树预览', family: '', level: '1', title: '绽放·原态', summary: G1_FULL }), { source: '局前树预览', family: '', level: '1', title: '绽放·原态', summary: G1_FULL }),
+      B('只给反应族「绽放」+ 等级 4（四个末级节点）', () => act.matchBlessing({ source: '局前树预览', family: '绽放', level: '4', title: '', summary: '' }), { family: '绽放', level: '4', title: '', summary: '' }),
+    ] },
+    { title: '4 同名不同路径：蒸发·极限原态', tagText: '非当期反例 + 合成摘要', desc: 'BWIKI 现行表里“蒸发·极限原态”同时是分支 1B 和 2B，两处文字也一模一样。看：只凭标题是两个候选；只有摘要里带着 2 级分支的区分词（浪涌 / 炽燃）才能定路径。这里的摘要是合成的，还没有 4 级汇总截图。', steps: [
+      B('只给标题「蒸发·极限原态」', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '蒸发·极限原态', summary: '' }), { source: '获得结果页', family: '', level: '', title: '蒸发·极限原态', summary: '' }),
+      B('加上一段合成的 4 级汇总（含“浪涌冲击”）', () => act.matchBlessing({ source: '祝福汇总页', family: '', level: '4', title: '蒸发·极限原态', summary: SYN_VAPE_SUMMARY }), { source: '祝福汇总页', level: '4', summary: SYN_VAPE_SUMMARY }),
+    ] },
+    { title: '5 历史重名：火晶', tagText: '现行表 vs 加强历史', desc: '“火晶·初阶岩破”在现行表是分支 1，在 2026 年 2 月前的旧表是分支 2，文字也不同；“火晶·初阶迸火”只在旧表有。看：规则集是身份的一部分；左右位置会变，不能当身份；旧表独有的标题在现行表下判为版本漂移。', steps: [
+      B('现行表：标题「火晶·初阶岩破」', () => { act.setRuleset('current'); act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '火晶·初阶岩破', summary: '' }); }, { ruleset: 'current', family: '', level: '', title: '火晶·初阶岩破', summary: '' }),
+      B('切到 legacy-pre-2026-02：同一标题', () => { act.setRuleset('legacy-pre-2026-02'); act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '火晶·初阶岩破', summary: '' }); }, { ruleset: 'legacy-pre-2026-02' }),
+      B('切回现行表：标题「火晶·初阶迸火」（旧表独有）', () => { act.setRuleset('current'); act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '火晶·初阶迸火', summary: '' }); }, { ruleset: 'current', title: '火晶·初阶迸火' }),
+      B('现行表：「火晶·极限碎岩」（旧表同名但在另一条路径、文字不同）', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '火晶·极限碎岩', summary: '' }), { title: '火晶·极限碎岩' }),
+    ] },
+    { title: '6 矛盾：标题与等级/文字对不上', tagText: '合成输入', desc: '识别结果互相打架时不能静默选一个。看：标题是 4 级节点但画面等级 2 → 矛盾；标题对、文字却是别的祝福 → 文字不符；标题和反应族不一致 → 矛盾。', steps: [
+      B('「激化·极限碎霆」+ 等级 2', () => act.matchBlessing({ source: '获得结果页', family: '', level: '2', title: '激化·极限碎霆', summary: '' }), { source: '获得结果页', family: '', level: '2', title: '激化·极限碎霆', summary: '' }),
+      B('「激化·原态」+ 一段感电的文字', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '激化·原态', summary: EC_TEXT }), { level: '', title: '激化·原态', summary: EC_TEXT }),
+      B('「绽放·原态」但反应族选「激化」', () => act.matchBlessing({ source: '祝福汇总页', family: '激化', level: '', title: '绽放·原态', summary: '' }), { source: '祝福汇总页', family: '激化', title: '绽放·原态', summary: '' }),
+    ] },
+    { title: '7 未知：识别错的标题', tagText: '合成输入', desc: 'OCR 把“雷暴”读成“雷霆”。看：结果是“未知”，相近标题只作提示；等级 0 是未解锁，不是节点。', steps: [
+      B('「激化·极限雷霆」', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '激化·极限雷霆', summary: '' }), { source: '获得结果页', family: '', level: '', title: '激化·极限雷霆', summary: '' }),
+      B('反应族「感电」+ 等级 0', () => act.matchBlessing({ source: '祝福汇总页', family: '感电', level: '0', title: '', summary: '' }), { source: '祝福汇总页', family: '感电', level: '0', title: '', summary: '' }),
+    ] },
+    { title: '8 持有列表：两条神秘收获', tagText: '真实截图 G3', desc: '演出详情的神秘收获页显示两张卡和“当前持有 2”。看：标题唯一命中；“即兴特邀”随机到了谁画面没有；本幕结束后它的实例已结束，但列表是否还显示——没观察过，所以核对只能标“未知”。', steps: [
+      B('第 1 幕获得「伙伴·即兴特邀」', () => act.acquire('伙伴·即兴特邀'), { boonTitle: '伙伴·即兴特邀', boonText: G3_A }),
+      B('第 1 幕获得「惊喜·近价交换」', () => act.acquire('惊喜·近价交换'), { boonTitle: '惊喜·近价交换', boonText: G3_B }),
+      B('核对持有列表：两项，当前持有 2', () => act.observe(['伙伴·即兴特邀', '惊喜·近价交换'], 2), { holding: '伙伴·即兴特邀, 惊喜·近价交换', holdingCount: 2 }),
+      B('本幕战斗结束', () => act.actDone()),
+      B('再核对同样的列表', () => act.observe(['伙伴·即兴特邀', '惊喜·近价交换'], 2)),
+    ] },
+    { title: '9 一次性与限次', tagText: '合成事件', desc: '“礼物·储备花卉”花朵为 0 时触发一次；“助益·热情声援”后续 2 次；“伙伴·决战角色”随机选一个目标。看：这些状态都不在标题里，只能从事件跟踪；核对列表时也判不出剩余次数。', steps: [
+      B('第 1 幕获得「礼物·储备花卉」', () => act.acquire('礼物·储备花卉'), { boonTitle: '礼物·储备花卉', boonText: '' }),
+      B('获得「助益·热情声援」（疑似旧系统词条）', () => act.acquire('助益·热情声援'), { boonTitle: '助益·热情声援' }),
+      B('获得「伙伴·决战角色」（目标角色未知）', () => act.acquire('伙伴·决战角色'), { boonTitle: '伙伴·决战角色' }),
+      B('热情声援触发一次', () => act.trigger('i2')),
+      B('可用花朵归零', () => act.flowersZero()),
+      B('核对列表：三项都还在，当前持有 3', () => act.observe(['礼物·储备花卉', '助益·热情声援', '伙伴·决战角色'], 3), { holding: '礼物·储备花卉, 助益·热情声援, 伙伴·决战角色', holdingCount: 3 }),
+    ] },
+    { title: '10 跨期更新：合成的下一期包', tagText: '合成包', desc: '模拟换期：绽放·原态改了数值、感电·初阶浮雷改名、删一条神秘收获、加一条。看：差异按身份列出，已核验的绽放·原态核验失效；旧标题在新包里是未知；旧文字还能匹配到绽放·原态，但核验状态会提醒“文字已变”。', steps: [
+      B('加载合成包并显示差异', () => { act.loadPack('synthetic'); act.showDiff(); }),
+      B('匹配旧标题「感电·初阶浮雷」', () => act.matchBlessing({ source: '获得结果页', family: '', level: '', title: '感电·初阶浮雷', summary: '' }), { source: '获得结果页', family: '', level: '', title: '感电·初阶浮雷', summary: '' }),
+      B('匹配「绽放·原态」+ 旧截图文字', () => act.matchBlessing({ source: '局前树预览', family: '', level: '1', title: '绽放·原态', summary: G1_FULL }), { source: '局前树预览', level: '1', title: '绽放·原态', summary: G1_FULL }),
+      B('匹配被删掉的「助益·强劲祝福」', () => act.matchBoon({ title: '助益·强劲祝福', text: '' }), { boonTitle: '助益·强劲祝福', boonText: '' }),
+      B('回到原始包', () => act.loadPack('base')),
+    ] },
+  ];
+  function renderTabs() { $('tabs').innerHTML = SCENARIOS.map((s, i) => `<button class="${i === scenarioIdx ? 'active' : ''}" onclick="ui.openScenario(${i})">${esc(s.title)}</button>`).join(''); }
+  function renderScenario() {
+    const s = SCENARIOS[scenarioIdx];
+    $('scenario').innerHTML = `<p>${tag(s.tagText.startsWith('真实') ? 'ok' : 'warn', s.tagText)} ${esc(s.desc)}</p><div class="steps">${s.steps.map((st, i) => `<button class="${i < stepDone ? 'done' : i === stepDone ? 'primary' : ''}" ${i > stepDone ? 'disabled' : ''} onclick="ui.runStep(${i})"><span class="n">${i + 1}.</span>${esc(st.label)}</button>`).join('')}</div>`;
+  }
+  function openScenario(i) { scenarioIdx = i; stepDone = 0; act.reset(); renderTabs(); renderScenario(); render(); }
+  function runStep(i) { const st = SCENARIOS[scenarioIdx].steps[i]; if (st.fill) fill(st.fill); st.run(); if (i === stepDone) stepDone = i + 1; renderScenario(); render(); }
+
+  function init() {
+    basePack = loadEmbedded();
+    if (!basePack) { document.querySelectorAll('main section').forEach(s => s.style.opacity = .4); return; }
+    state = initialState(); pack = RuleMatch.prepare(basePack);
+    renderTabs(); renderScenario(); render();
+  }
+  const wrap = fn => (...a) => { fn(...a); render(); };
+  return {
+    matchBlessing: wrap(() => act.matchBlessing()), matchBoon: wrap(() => act.matchBoon()), acquire: wrap(() => act.acquire()), trigger: wrap(() => act.trigger()),
+    actDone: wrap(() => act.actDone()), flowersZero: wrap(() => act.flowersZero()), observe: wrap(() => act.observe()), setRuleset: wrap(() => act.setRuleset()),
+    loadPack: wrap(w => act.loadPack(w)), showDiff: wrap(() => act.showDiff()), reset: wrap(() => { act.reset(); stepDone = 0; renderScenario(); }),
+    openScenario, runStep, init, SCENARIOS,
+  };
+})();
+document.addEventListener('DOMContentLoaded', ui.init);
+</script>
+</body>
+</html>
