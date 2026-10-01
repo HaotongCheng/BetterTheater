@@ -10,17 +10,21 @@ py -3.11 -m venv .venv
 .venv\Scripts\python -m pip install opencv-python-headless numpy pillow rapidocr_onnxruntime winocr
 .venv\Scripts\python ocr_cache.py   # 全屏 OCR 一次（Rapid + Windows OCR），写 out/ocr_cache.json
 .venv\Scripts\python run.py         # 跑全部候选方法，写 out/results.json 与 out/report.html
+.venv\Scripts\python review_sheet.py # 生成真值复核页 out/review.html（给用户逐项确认）
 ```
 
 截图从主检出的 `docs/research/assets/`（未入库）读取，可用环境变量 `BT_ASSETS` 改路径。
 `out/` 已忽略：报告内嵌截图裁片与 UID，不要提交。
+
+路线比较报告：[`docs/research/screen-reading-route-2026-09-30.md`](../../docs/research/screen-reading-route-2026-09-30.md)。
 
 ## 文件
 
 - `samples.py`：样本登记。S01–S23 为 2560×1440 用户截图；`E1:*` 为旧合作局 13 张用户裁切图。
 - `labels.py`：真值。代理逐图人工标注，**待用户复核**；`NV` 表示画面不可见、方法应输出未读。
 - `textread.py`：按固定文案锚点判页（11 种页面 + 拒判），再按锚点相对位置读字段；不写死坐标。
-- `vision.py`：体力格模板匹配（模板取自 S15 一张图）、头像身份直方图配对、目标勾叉颜色判定。
+- `vision.py`：体力格模板匹配（`LIBRARY` 参考图库：S15 头像式、S23 卡片式、E1 最终战深色全灰）、头像身份直方图配对、目标勾叉颜色判定。
+- `review_sheet.py`：真值复核页，裁片 + 标注 + 问题 + 对/错选择。
 - `run.py`：跑 R0/R1/R2/W1、V1/V2、I1/I2，评分并生成报告。
 
 ## 候选方法
@@ -31,5 +35,5 @@ py -3.11 -m venv .venv
 | R1 | RapidOCR（PaddleOCR v4 ONNX，本地）全屏一次 → 锚点判页 → 相对位置读字段 |
 | R2 | R1 + 对“未读”字段按锚点裁小图放大补读一次 |
 | W1 | Windows 内置 OCR（zh-Hans）全屏一次 → 同一套判页与解析 |
-| V1 / V2 | 体力格：边缘模板 / 饱和度模板找亮格 + 边缘模板找灰格，再按间距分人 |
+| V1 / V2 / V3 | 体力格：边缘模板 / 饱和度模板找亮格 + 边缘模板找灰格 / 本地参考图库（5 张模板，按锚点字高缩放），再按间距分人 |
 | I1 / I2 | 跨页身份：头像 HSV 直方图 / 灰度相关，穷举最优配对 |

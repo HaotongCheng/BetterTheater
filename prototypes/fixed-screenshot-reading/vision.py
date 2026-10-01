@@ -7,20 +7,38 @@ import itertools
 import cv2
 import numpy as np
 
-# 模板来源：S15（仅此一张），因此 S15 不参与体力评分。
+# 参考图库：每条 (名称, 亮/灰, 来源图, 框, 来源图的锚点文字高度)。匹配时按 当前锚点高度/来源锚点高度 缩放。
+# V1/V2 只用前两条（S15）；V3 用全部。来源图自身不算诚实测试：S23 测卡片式、E1 最终战测深色全灰都被污染，只有 S10 是诚实的卡片式测试。
 TEMPLATE_SRC = "S15"
-LIT_BOX = (1112, 684, 1132, 712)    # x0,y0,x1,y1 in S15
-GREY_BOX = (1140, 683, 1158, 711)
+LIT_BOX = (1112, 684, 1132, 712)    # S15 头像式亮格
+GREY_BOX = (1140, 683, 1158, 711)   # S15 头像式灰格（深色底）
+LIBRARY = [
+    ("head_lit", "lit", "S15", LIT_BOX),
+    ("head_grey", "grey", "S15", GREY_BOX),
+    ("card_lit", "lit", "S23", (777, 980, 795, 1007)),        # 卡片式亮格（橙色卡面）
+    ("card_grey", "grey", "S23", (1536, 979, 1556, 1008)),    # 卡片式灰格（浅色卡面）
+    ("dark_grey", "grey", "E1:final-battle", (445, 425, 459, 443)),  # 深色底全灰格
+]
+
+
+class Template:
+    def __init__(self, name, kind, img, box, ref_h):
+        self.name, self.kind, self.ref_h = name, kind, ref_h
+        x0, y0, x1, y1 = box
+        self.gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[y0:y1, x0:x1]
+        self.sat = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[y0:y1, x0:x1, 1]
 
 
 class Templates:
-    def __init__(self, img_s15, anchor_h):
+    """保持旧接口：T.lit / T.grey / T.lit_sat / T.ref_h 指向 S15 模板；T.lib 为全部模板。"""
+    def __init__(self, img_s15, anchor_h, lib=None):
         self.ref_h = anchor_h
         g = cv2.cvtColor(img_s15, cv2.COLOR_BGR2GRAY)
         sat = cv2.cvtColor(img_s15, cv2.COLOR_BGR2HSV)[..., 1]
         self.lit = g[LIT_BOX[1]:LIT_BOX[3], LIT_BOX[0]:LIT_BOX[2]]
         self.grey = g[GREY_BOX[1]:GREY_BOX[3], GREY_BOX[0]:GREY_BOX[2]]
         self.lit_sat = sat[LIT_BOX[1]:LIT_BOX[3], LIT_BOX[0]:LIT_BOX[2]]
+        self.lib = lib or []
 
 
 def edges(gray):
@@ -44,7 +62,9 @@ def band_for(anchor, page, W, H):
     else:
         y0, y1 = anchor.y1 + 1.8 * h, anchor.y1 + 4.4 * h
     if page in ("battle_preview", "details_roster"):
-        x0, x1 = anchor.x0 - 1.5 * h, anchor.x0 + 26 * h      # 左对齐列表
+        x0, x1 = anchor.x0 - 1.5 * h, anchor.x0 + (34 if page == "details_roster" else 26) * h   # 左对齐列表
+    elif page == "rewind_result":
+        x0, x1 = anchor.cx - 19 * h, anchor.cx + 19 * h        # 卡片更宽
     else:
         x0, x1 = anchor.cx - 15 * h, anchor.cx + 15 * h        # 居中列表
     return int(max(0, y0)), int(min(H, y1)), int(max(0, x0)), int(min(W, x1))
@@ -61,13 +81,18 @@ def detect_slots(img, anchor, page, T, thr=0.7, thr_lit=0.5, mode="sat"):
     e = edges(cv2.cvtColor(band, cv2.COLOR_BGR2GRAY))
     sat = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)[..., 1]
     dets = []
-    # 亮格：饱和度图上匹配（橙色描边在深/浅背景都突出）；灰格：边缘图上匹配
-    plan = [("lit", T.lit_sat, sat, thr_lit) if mode == "sat" else ("lit", T.lit, e, thr), ("grey", T.grey, e, thr)]
-    for kind, t, chan, th in plan:
-        tt = cv2.resize(t, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    # V1：亮/灰都在边缘图上匹配；V2：亮格改在饱和度图上；V3：参考图库全部模板（亮→饱和度，灰→边缘）
+    if mode == "lib":
+        plan = [(t.kind, t.sat if t.kind == "lit" else t.gray, sat if t.kind == "lit" else e,
+                 thr_lit if t.kind == "lit" else thr, anchor.h / t.ref_h, t.name) for t in T.lib]
+    else:
+        plan = [(("lit", T.lit_sat, sat, thr_lit) if mode == "sat" else ("lit", T.lit, e, thr)) + (s, "head_lit"),
+                ("grey", T.grey, e, thr, s, "head_grey")]
+    for kind, t, chan, th, sc, tname in plan:
+        tt = cv2.resize(t, None, fx=sc, fy=sc, interpolation=cv2.INTER_AREA)
         if tt.shape[0] >= chan.shape[0] or tt.shape[1] < 4:
             continue
-        te = tt if (kind == "lit" and mode == "sat") else edges(tt)
+        te = tt if (kind == "lit" and mode in ("sat", "lib")) else edges(tt)
         r = cv2.matchTemplate(chan.astype(np.float32), te.astype(np.float32), cv2.TM_CCOEFF_NORMED)
         if te is not tt:
             # 平坦区域的归一化相关会退化成 ±1；要求窗口内边缘能量与模板相当
@@ -77,7 +102,7 @@ def detect_slots(img, anchor, page, T, thr=0.7, thr_lit=0.5, mode="sat"):
         r[~np.isfinite(r)] = 0
         ys, xs = np.where(r >= th)
         for y, x in zip(ys, xs):
-            dets.append((float(r[y, x]) + (0.5 if kind == "lit" else 0), int(x + bx0), int(y + y0), tt.shape[1], tt.shape[0], kind))
+            dets.append((float(r[y, x]) + (0.5 if kind == "lit" else 0), int(x + bx0), int(y + y0), tt.shape[1], tt.shape[0], kind, tname))
     # NMS
     dets.sort(reverse=True)
     keep = []
@@ -90,9 +115,9 @@ def detect_slots(img, anchor, page, T, thr=0.7, thr_lit=0.5, mode="sat"):
         med = np.median(ys[np.argsort([-k[0] for k in keep])][:max(2, len(keep) // 2)])
         keep = [k for k in keep if abs(k[2] - med) < 0.5 * k[4]]
     out = []
-    for sc, x, y, w, h, kind in sorted(keep, key=lambda k: k[1]):
+    for sc, x, y, w, h, kind, tname in sorted(keep, key=lambda k: k[1]):
         lit = is_lit(img[y:y + h, x:x + w])
-        out.append({"x": x, "y": y, "w": w, "h": h, "score": sc - (0.5 if kind == "lit" else 0), "tmpl": kind, "litness": lit, "lit": lit > 0.18})
+        out.append({"x": x, "y": y, "w": w, "h": h, "score": sc - (0.5 if kind == "lit" else 0), "tmpl": tname, "litness": lit, "lit": lit > 0.18})
     return out, (y0, y1, bx0, bx1, s)
 
 

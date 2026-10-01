@@ -151,7 +151,10 @@ def run_fixed_roi(k):
 
 # ------------------------------------------------------------------ image methods
 A15 = tr.first(toks_for("rapid", "S15"), tr.ROSTER_ANCHOR["battle_result_lineup"])
-TPL = vi.Templates(img("S15"), A15.h)
+LIB = [vi.Template(n, kind, img(src), box, tr.first(toks_for("rapid", src), tr.ROSTER_ANCHOR[LABELS[src]["page"]]).h)
+       for n, kind, src, box in vi.LIBRARY]
+TPL = vi.Templates(img("S15"), A15.h, LIB)
+CONTAMINATED = {src for _, _, src, _ in vi.LIBRARY}   # 模板来源图：V3 在这些图上的成绩不算
 
 
 def stamina(k, page, toks, mode):
@@ -216,13 +219,18 @@ def main():
                     m["fields"][fn] = {"truth": tv, "value": o["value"], "raw": o["raw"], "status": status(tv, o if o["value"] is not None else None)}
             rec["methods"]["R0 固定坐标ROI"] = m
         # 体力
-        if "stamina" in lab and k != vi.TEMPLATE_SRC:
+        if "stamina" in lab:
             rec["stamina"] = {}
-            for mode, name in (("edge", "V1 边缘模板"), ("sat", "V2 饱和度+边缘模板")):
+            for mode, name in (("edge", "V1 边缘模板"), ("sat", "V2 饱和度+边缘模板"), ("lib", "V3 参考图库")):
+                if k == vi.TEMPLATE_SRC and mode != "lib":
+                    continue
                 st = stamina(k, lab["page"], rec["_toks"], mode)
+                stt = status(lab["stamina"], st)
+                if mode == "lib" and k in CONTAMINATED:
+                    stt += "(模板来源，不计)"
                 rec["stamina"][name] = {"truth": lab["stamina"], "value": st["value"] if st else None,
                                         "raw": st["raw"] if st else "无锚点", "sec": st["sec"] if st else None,
-                                        "status": status(lab["stamina"], st), "img": b64(st["crop"]) if st else "",
+                                        "status": stt, "img": b64(st["crop"]) if st else "",
                                         "_avs": st["avatars"] if st else []}
         R["samples"][k] = rec
 
@@ -230,7 +238,7 @@ def main():
     for a, b in IDENTITY_PAIRS:
         ra, rb = R["samples"][a], R["samples"][b]
         def avs(k, rec):
-            if "stamina" in rec:
+            if "stamina" in rec and "V2 饱和度+边缘模板" in rec["stamina"]:
                 return rec["stamina"]["V2 饱和度+边缘模板"]["_avs"]
             st = stamina(k, LABELS[k]["page"], toks_for("rapid", k), "sat")   # 模板来源图：只取位置，不评分
             return st["avatars"] if st else []
@@ -353,10 +361,10 @@ def write_report(R):
     H.append("<h2>汇总</h2><p class=mut>页面定位（按页面判定；未支持的页面应拒判为 unknown）</p>" + tbl(page, ["正确", "错误"]))
     H.append("<p class=mut>文本与勾叉字段（逐字段；“未读(页面)”= 页面没定位上导致整页字段没读）</p>" +
              tbl(field, ["正确", "正确(经纠正)", "正确(不可见)", "误读", "未读", "未读(页面)"]))
-    H.append("<p class=mut>体力：整帧所有人的亮格数都对才算正确（S15 是模板来源，不计）</p>" + tbl(stam, ["正确", "误读", "未读"]))
+    H.append("<p class=mut>体力：整帧所有人的亮格数都对才算正确。V3 在模板来源图（S15/S23/E1 最终战）上的成绩单列、不计。</p>" + tbl(stam, ["正确", "误读", "未读", "正确(模板来源，不计)", "误读(模板来源，不计)"]))
     H.append("<p class=mut>跨页身份关联：逐人是否配对到同一角色</p>" + tbl(ident, ["正确", "错误", "对"]))
 
-    H.append("<h2>体力格检测</h2><p class=mut>蓝框 = 由锚点文字推出的搜索带；黄框 = 判为亮格；灰框 = 判为灰格。</p>")
+    H.append("<h2>体力格检测</h2><p class=mut>图为 V3 的检测：蓝框 = 由锚点文字推出的搜索带；黄框 = 判为亮格；灰框 = 判为灰格。</p>")
     for k, rec in R["samples"].items():
         if "stamina" not in rec:
             continue
@@ -364,7 +372,7 @@ def write_report(R):
         for name, s in rec["stamina"].items():
             H.append(f"<div>{html.escape(name)}：真值 <code>{s['truth']}</code> 读出 <code>{s['value']}</code> "
                      f"<span class={cls(s['status'])}>{s['status']}</span> <span class=mut>{s['raw']}</span></div>")
-        H.append(f"<img src='{rec['stamina']['V2 饱和度+边缘模板']['img']}'></div>")
+        H.append(f"<img src='{rec['stamina']['V3 参考图库']['img']}'></div>")
 
     H.append("<h2>跨页身份关联</h2><p class=mut>第一行为 A 页头像，第二行为按方法配到的 B 页头像（I1）；✗ 为配错。margin = 最佳与次佳相似度差，越小越不可靠。</p>")
     for e in R["identity"]:
